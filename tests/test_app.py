@@ -1,0 +1,223 @@
+import tempfile
+import threading
+import time
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+
+import pandas as pd
+
+import app
+import boss_import
+
+
+class AppDataTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.data_path = Path(self.temp_dir.name) / "jobs.csv"
+        self.original_data_path = app.DATA_PATH
+        self.original_uploaded_data = app.uploaded_data
+        app.DATA_PATH = self.data_path
+        app.uploaded_data = None
+        app.invalidate_data_cache()
+
+    def tearDown(self):
+        app.DATA_PATH = self.original_data_path
+        app.uploaded_data = self.original_uploaded_data
+        app.invalidate_data_cache()
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def sample_rows():
+        return pd.DataFrame(
+            [
+                {
+                    "job_name": "数据分析师",
+                    "company": "甲公司",
+                    "city": "杭州",
+                    "salary_low": 10000,
+                    "salary_high": 20000,
+                    "education": "本科",
+                    "work_years": "1-3年",
+                    "category": "互联网",
+                    "skills": "Python,SQL",
+                    "description": "数据分析",
+                },
+                {
+                    "job_name": "数据分析师",
+                    "company": "甲公司",
+                    "city": "杭州",
+                    "salary_low": 10000,
+                    "salary_high": 20000,
+                    "education": "本科",
+                    "work_years": "1-3年",
+                    "category": "互联网",
+                    "skills": "Python,SQL",
+                    "description": "数据分析",
+                },
+                {
+                    "job_name": "数据分析师",
+                    "company": "甲公司",
+                    "city": "杭州",
+                    "salary_low": 3000,
+                    "salary_high": 5000,
+                    "education": "大专",
+                    "work_years": "应届/无经验",
+                    "category": "互联网",
+                    "skills": "Excel",
+                    "description": "",
+                },
+                {
+                    "job_name": "运营专员",
+                    "company": "乙公司",
+                    "city": "上海",
+                    "salary_low": "面议",
+                    "salary_high": "",
+                    "education": "大专",
+                    "work_years": "未知",
+                    "category": "运营",
+                    "skills": "",
+                    "description": "",
+                },
+            ]
+        )
+
+    def write_sample_csv(self):
+        self.sample_rows().to_csv(self.data_path, index=False, encoding="utf-8-sig")
+
+    def test_load_data_cleans_and_deduplicates_while_preserving_distinct_salary(self):
+        self.write_sample_csv()
+
+        frame = app.load_data()
+
+        self.assertEqual(len(frame), 2)
+        self.assertEqual(frame["salary_low"].tolist(), [10000.0, 3000.0])
+
+    def test_load_data_caches_csv_reads_and_returns_independent_frames(self):
+        self.write_sample_csv()
+        original_read_csv = pd.read_csv
+
+        with patch.object(app.pd, "read_csv", wraps=original_read_csv) as read_csv:
+            first = app.load_data()
+            first.loc[0, "job_name"] = "caller mutation"
+            second = app.load_data()
+
+        self.assertEqual(read_csv.call_count, 1)
+        self.assertEqual(second.loc[0, "job_name"], "数据分析师")
+
+    def test_load_data_invalidates_cache_when_csv_changes(self):
+        self.write_sample_csv()
+        initial = app.load_data()
+        changed = pd.concat(
+            [
+                self.sample_rows().iloc[:1],
+                pd.DataFrame(
+                    [
+                        {
+                            "job_name": "产品经理",
+                            "company": "丙公司",
+                            "city": "北京",
+                            "salary_low": 20000,
+                            "salary_high": 30000,
+                            "education": "本科",
+                            "work_years": "3-5年",
+                            "category": "互联网",
+                            "skills": "产品",
+                            "description": "",
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+        changed.to_csv(self.data_path, index=False, encoding="utf-8-sig")
+
+        reloaded = app.load_data()
+
+        self.assertEqual(len(initial), 2)
+        self.assertEqual(len(reloaded), 2)
+        self.assertIn("产品经理", reloaded["job_name"].tolist())
+
+    def test_parallel_requests_share_a_single_csv_load(self):
+        self.write_sample_csv()
+        original_read_csv = pd.read_csv
+        call_count = 0
+        count_lock = threading.Lock()
+
+        def slow_read_csv(*args, **kwargs):
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            time.sleep(0.03)
+            return original_read_csv(*args, **kwargs)
+
+        with patch.object(app.pd, "read_csv", side_effect=slow_read_csv):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: len(app.load_data()), range(8)))
+
+        self.assertEqual(results, [2] * 8)
+        self.assertEqual(call_count, 1)
+
+    def test_missing_data_path_raises_actionable_error(self):
+        with self.assertRaisesRegex(FileNotFoundError, "岗位数据文件不存在"):
+            app.load_data()
+
+    def test_dashboard_and_filters_return_expected_counts(self):
+        self.write_sample_csv()
+        client = app.app.test_client()
+
+        dashboard = client.get("/api/dashboard?city=杭州&min_salary=10000")
+        jobs = client.get("/api/jobs?city=杭州&min_salary=10000")
+        options = client.get("/api/options")
+
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(dashboard.get_json()["summary"]["total_jobs"], 1)
+        self.assertEqual(len(jobs.get_json()), 1)
+        self.assertEqual(options.status_code, 200)
+        self.assertEqual(options.get_json()["city"], ["杭州"])
+
+    def test_empty_csv_returns_an_empty_normalized_frame(self):
+        pd.DataFrame(columns=self.sample_rows().columns).to_csv(
+            self.data_path, index=False, encoding="utf-8-sig"
+        )
+
+        frame = app.load_data()
+
+        self.assertTrue(frame.empty)
+        self.assertEqual(list(frame.columns), app.JOB_COLUMNS)
+
+    def test_salary_parser_handles_monthly_daily_and_negotiable_values(self):
+        self.assertEqual(boss_import.parse_salary("1.5-2万"), (15000.0, 20000.0))
+        self.assertEqual(
+            boss_import.parse_salary("300-500元/天"),
+            (6525.0, 10875.0),
+        )
+        self.assertEqual(boss_import.parse_salary("面议"), (None, None))
+
+    def test_import_dedupes_job_id_and_business_key_without_dropping_salary_variants(self):
+        def record(job_id, salary_low, title="数据分析师", company="甲公司"):
+            return {
+                "_job_id": job_id,
+                "job_name": title,
+                "company": company,
+                "city": "杭州",
+                "salary_low": salary_low,
+                "salary_high": salary_low + 1000,
+            }
+
+        result = boss_import.dedupe(
+            [
+                record("id-1", 10000),
+                record("id-1", 12000),
+                record("id-2", 10000),
+                record("id-3", 20000),
+            ]
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual([row["salary_low"] for row in result], [10000, 20000])
+
+
+if __name__ == "__main__":
+    unittest.main()

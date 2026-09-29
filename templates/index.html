@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>招聘岗位需求分析与可视化系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  </head>
+  <body>
+    <div class="page-wrap">
+      <header class="topbar">
+        <div>
+          <p class="sub-title">毕业设计项目</p>
+          <h1>招聘岗位需求分析与可视化系统</h1>
+        </div>
+        <div class="header-badge">实时数据分析</div>
+      </header>
+
+      <section class="data-source-panel">
+        <div>
+          <strong>数据来源</strong>
+          <span id="dataSourceHint">正在读取…</span>
+          <small>支持 CSV、Excel；仅使用你有权访问的公开数据</small>
+        </div>
+        <div class="upload-actions">
+          <label class="file-btn">
+            选择数据文件
+            <input id="dataFileInput" type="file" accept=".csv,.xlsx,.xls" />
+          </label>
+          <button id="uploadDataBtn" type="button">上传并分析</button>
+          <button id="resetDataBtn" class="secondary" type="button">恢复示例数据</button>
+        </div>
+      </section>
+
+      <section class="filter-panel">
+        <div class="filter-row">
+          <label>
+            <span>城市</span>
+            <select id="cityFilter">
+              <option value="">全部城市</option>
+            </select>
+          </label>
+
+          <label>
+            <span>学历</span>
+            <select id="educationFilter">
+              <option value="">全部学历</option>
+            </select>
+          </label>
+
+          <label>
+            <span>经验</span>
+            <select id="experienceFilter">
+              <option value="">全部经验</option>
+            </select>
+          </label>
+
+          <label>
+            <span>行业/类别</span>
+            <select id="categoryFilter">
+              <option value="">全部类别</option>
+            </select>
+          </label>
+
+          <label class="search-box">
+            <span>关键词</span>
+            <input id="keywordInput" type="search" maxlength="80" placeholder="岗位/公司/技能/描述" />
+          </label>
+
+          <button id="applyFilterBtn">筛选</button>
+          <button id="resetFilterBtn" class="secondary">重置</button>
+        </div>
+      </section>
+
+      <section class="summary-panel">
+        <div class="summary-card">
+          <span>岗位总数</span>
+          <strong id="totalJobs">0</strong>
+        </div>
+        <div class="summary-card">
+          <span>平均薪资</span>
+          <strong id="avgSalary">0</strong>
+        </div>
+        <div class="summary-card">
+          <span>覆盖城市</span>
+          <strong id="cityCount">0</strong>
+        </div>
+        <div class="summary-card">
+          <span>热门技能</span>
+          <strong id="topSkill">0</strong>
+        </div>
+      </section>
+
+      <section class="toolbar">
+        <span id="resultHint">正在加载数据…</span>
+        <div>
+          <a class="export-btn" id="csvExport" href="/export/csv">导出 CSV</a>
+          <a class="export-btn" id="excelExport" href="/export/excel">导出 Excel</a>
+        </div>
+      </section>
+
+      <section class="company-panel">
+        <div class="chart-header">
+          <h3>招聘企业热度</h3>
+        </div>
+        <div id="companyList" class="company-list"></div>
+      </section>
+
+      <section class="charts-grid">
+        <div class="chart-card chart-large">
+          <div class="chart-header">
+            <h3>薪资分布</h3>
+          </div>
+          <div id="salaryChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>学历要求</h3>
+          </div>
+          <div id="educationChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>城市分布</h3>
+          </div>
+          <div id="cityChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>经验要求</h3>
+          </div>
+          <div id="experienceChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>行业/岗位类别</h3>
+          </div>
+          <div id="categoryChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>热门技能</h3>
+          </div>
+          <div id="skillChart" class="chart"></div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>职位文本高频词</h3>
+          </div>
+          <div id="keywordChart" class="chart"></div>
+        </div>
+      </section>
+
+      <section class="table-card">
+        <div class="chart-header">
+          <h3>岗位招聘概览</h3>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>岗位</th>
+                <th>公司</th>
+                <th>城市</th>
+                <th>薪资</th>
+                <th>学历</th>
+                <th>经验</th>
+                <th>类别</th>
+                <th>技能</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="jobTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="detailDialog" class="detail-dialog">
+      <button id="closeDetailBtn" class="dialog-close" type="button" aria-label="关闭">×</button>
+      <h2 id="detailTitle">岗位详情</h2>
+      <div id="detailContent"></div>
+    </dialog>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  </body>
+</html>

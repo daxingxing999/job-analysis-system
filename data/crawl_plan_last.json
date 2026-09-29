@@ -1,0 +1,218 @@
+{
+  "generated_at": "2026-09-28T22:08:56",
+  "config": {
+    "strategy": "balanced",
+    "budget": 20,
+    "pages": 5,
+    "total_target": 25000,
+    "max_families_per_city": 6,
+    "combo_min_jobs": 8,
+    "max_slices": 0,
+    "slice_strategy": "experience",
+    "nationwide_factor": 2.0,
+    "cities": 371,
+    "families": 20
+  },
+  "combos": [
+    {
+      "city": "惠州",
+      "family_id": "frontend",
+      "family_name": "前端开发",
+      "keyword": "Vue",
+      "score": 1.098924,
+      "reason": "城缺口98% 族缺口79% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "温州",
+      "family_id": "medical",
+      "family_name": "医疗健康",
+      "keyword": "医药代表",
+      "score": 1.085335,
+      "reason": "城缺口98% 族缺口92% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "盐城",
+      "family_id": "data",
+      "family_name": "数据",
+      "keyword": "数据分析师",
+      "score": 1.083301,
+      "reason": "城缺口98% 族缺口92% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "绍兴",
+      "family_id": "finance",
+      "family_name": "财务/会计",
+      "keyword": "财务经理",
+      "score": 1.063975,
+      "reason": "城缺口98% 族缺口90% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "襄阳",
+      "family_id": "product",
+      "family_name": "产品",
+      "keyword": "高级产品经理",
+      "score": 1.056082,
+      "reason": "城缺口98% 族缺口80% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "遵义",
+      "family_id": "ai",
+      "family_name": "算法/AI",
+      "keyword": "大模型算法",
+      "score": 1.046398,
+      "reason": "城缺口98% 族缺口66% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "镇江",
+      "family_id": "frontend",
+      "family_name": "前端开发",
+      "keyword": "Vue",
+      "score": 1.037895,
+      "reason": "城缺口98% 族缺口75% 已有2条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "呼和浩特",
+      "family_id": "hr",
+      "family_name": "人力/行政",
+      "keyword": "人力资源",
+      "score": 1.01669,
+      "reason": "城缺口97% 族缺口93% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "长春",
+      "family_id": "medical",
+      "family_name": "医疗健康",
+      "keyword": "医药代表",
+      "score": 1.01379,
+      "reason": "城缺口97% 族缺口87% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "桂林",
+      "family_id": "data",
+      "family_name": "数据",
+      "keyword": "大数据工程师",
+      "score": 1.011777,
+      "reason": "城缺口97% 族缺口87% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "扬州",
+      "family_id": "marketing",
+      "family_name": "市场",
+      "keyword": "广告投放",
+      "score": 1.008757,
+      "reason": "城缺口97% 族缺口87% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "柳州",
+      "family_id": "construct",
+      "family_name": "建筑/土木",
+      "keyword": "土建工程师",
+      "score": 1.005616,
+      "reason": "城缺口97% 族缺口92% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "淄博",
+      "family_id": "finance",
+      "family_name": "财务/会计",
+      "keyword": "出纳",
+      "score": 0.992649,
+      "reason": "城缺口97% 族缺口85% 已有3条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "济宁",
+      "family_id": "product",
+      "family_name": "产品",
+      "keyword": "高级产品经理",
+      "score": 0.974621,
+      "reason": "城缺口96% 族缺口76% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "中山",
+      "family_id": "edu",
+      "family_name": "教育",
+      "keyword": "课程顾问",
+      "score": 0.968763,
+      "reason": "城缺口96% 族缺口71% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "廊坊",
+      "family_id": "ai",
+      "family_name": "算法/AI",
+      "keyword": "算法工程师",
+      "score": 0.965137,
+      "reason": "城缺口96% 族缺口62% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "南通",
+      "family_id": "sales",
+      "family_name": "销售",
+      "keyword": "销售代表",
+      "score": 0.961271,
+      "reason": "城缺口96% 族缺口59% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "泰州",
+      "family_id": "frontend",
+      "family_name": "前端开发",
+      "keyword": "Web前端",
+      "score": 0.956808,
+      "reason": "城缺口96% 族缺口70% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "潍坊",
+      "family_id": "hr",
+      "family_name": "人力/行政",
+      "keyword": "招聘专员",
+      "score": 0.946368,
+      "reason": "城缺口96% 族缺口87% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    },
+    {
+      "city": "烟台",
+      "family_id": "medical",
+      "family_name": "医疗健康",
+      "keyword": "药师",
+      "score": 0.943498,
+      "reason": "城缺口96% 族缺口82% 已有4条 体量×1.41",
+      "skip_base": false,
+      "slices_done": 0
+    }
+  ]
+}
