@@ -112,6 +112,43 @@ class AppDataTests(unittest.TestCase):
         self.assertEqual(read_csv.call_count, 1)
         self.assertEqual(second.loc[0, "job_name"], "数据分析师")
 
+    def test_keyword_counts_are_cached_between_requests(self):
+        """回归：以前每个请求都对全量描述跑一遍 jieba，补上 JD 后会成为热点。"""
+        self.write_sample_csv()
+        frame = app.load_data()
+        original_tokenize = app.tokenize_text
+        calls = []
+
+        def counting(text):
+            calls.append(text)
+            return original_tokenize(text)
+
+        with patch.object(app, "tokenize_text", side_effect=counting):
+            first = app.keyword_counts(frame, 5)
+            after_first = len(calls)
+            second = app.keyword_counts(frame, 5)
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(calls), after_first, "第二次调用不应重复分词")
+        self.assertGreater(after_first, 0)
+
+    def test_keyword_counts_recompute_after_data_changes(self):
+        self.write_sample_csv()
+        frame = app.load_data()
+        app.keyword_counts(frame, 5)
+
+        changed = frame.copy()
+        changed.loc[0, "description"] = "完全不同的描述文本"
+        app.keyword_counts(changed, 5)
+
+        # 内容变了必须重算，不能继续返回旧结果
+        cached = app.keyword_counts(changed, 5)
+        self.assertTrue(any(item["name"] for item in cached))
+
+    def test_keyword_counts_handles_empty_frame(self):
+        self.assertEqual(app.keyword_counts(pd.DataFrame(), 5), [])
+        self.assertEqual(app.keyword_counts(None, 5), [])
+
     def test_load_data_invalidates_cache_when_csv_changes(self):
         self.write_sample_csv()
         initial = app.load_data()

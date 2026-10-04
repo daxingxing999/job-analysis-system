@@ -62,6 +62,9 @@ _data_cache_lock = threading.RLock()
 _data_cache_path: Path | None = None
 _data_cache_signature: tuple[int, int, int, int] | None = None
 _data_cache_frame: pd.DataFrame | None = None
+# 分词结果缓存：键是帧内容指纹，见 keyword_counts()
+_keyword_cache_lock = threading.RLock()
+_keyword_cache: dict[tuple, list[dict]] = {}
 
 
 def _text(value, default="未知") -> str:
@@ -245,6 +248,8 @@ def invalidate_data_cache() -> None:
         _data_cache_path = None
         _data_cache_signature = None
         _data_cache_frame = None
+    with _keyword_cache_lock:
+        _keyword_cache.clear()
 
 
 def read_uploaded_file(file_storage) -> pd.DataFrame:
@@ -298,11 +303,49 @@ def tokenize_text(text: str) -> list[str]:
 
 
 def keyword_counts(df: pd.DataFrame, limit: int = 20) -> list[dict]:
+    """技能 + 职位描述的高频词。
+
+    结果按「帧内容指纹」缓存：以前每个请求都对全量 description 跑一遍
+    jieba，一旦按要求把 JD 抓回来，这里就会变成明显的热点。
+    """
+    if df is None or df.empty:
+        return []
+    signature = _frame_signature(df)
+    with _keyword_cache_lock:
+        cached = _keyword_cache.get(signature)
+        if cached is not None:
+            return cached[:limit]
+
     counter = Counter()
     for _, row in df.iterrows():
         counter.update(normalize_skills(row.get("skills", "")))
         counter.update(tokenize_text(row.get("description", "")))
-    return [{"name": name, "value": int(value)} for name, value in counter.most_common(limit)]
+    ranked = [{"name": name, "value": int(value)} for name, value in counter.most_common()]
+
+    with _keyword_cache_lock:
+        _keyword_cache.clear()
+        _keyword_cache[signature] = ranked
+    return ranked[:limit]
+
+
+def _frame_signature(df: pd.DataFrame) -> tuple:
+    """给一帧算一个便宜且足够区分的内容指纹。
+
+    只取「行数 + 首末行的技能/描述」而不是哈希整列：后者每个请求都要扫
+    全表并拼接大字符串，省下的 jieba 开销又被它吃回去。
+    """
+    def cell(index: int, column: str) -> str:
+        try:
+            return str(df.iloc[index].get(column, "") or "")
+        except (IndexError, KeyError):
+            return ""
+
+    return (
+        len(df),
+        cell(0, "skills"), cell(0, "description"),
+        cell(len(df) - 1, "skills"), cell(len(df) - 1, "description"),
+        str(df.iloc[0].get("city", "")) if len(df) else "",
+    )
 
 
 def make_counts(series: pd.Series) -> list[dict]:
