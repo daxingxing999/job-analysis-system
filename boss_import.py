@@ -28,127 +28,63 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from collections import Counter
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_RESULTS_DIR = BASE_DIR / "抓取结果"
-DEFAULT_OUTPUT = BASE_DIR / "data" / "boss_jobs.csv"
+from jobanal import config as app_config
+from jobanal.parsing import (
+    EDUCATION_PATTERN,
+    EXPERIENCE_MAP,
+    EXPERIENCE_ORDER,
+    EXPERIENCE_PATTERN,
+    NO_SALARY_WORDS,
+    SKILL_SPLIT_PATTERN,
+    WORK_DAYS_PER_MONTH,
+    WORK_HOURS_PER_DAY,
+    clean_description,
+    display_company,
+    is_placeholder_company,
+    parse_city,
+    parse_education,
+    parse_experience,
+    parse_skills,
+    parse_salary_result,
+)
 
-OUTPUT_COLUMNS = [
-    "job_name",
-    "company",
-    "city",
-    "salary_low",
-    "salary_high",
-    "education",
-    "work_years",
-    "category",
-    "skills",
-    "description",
+BASE_DIR = app_config.BASE_DIR
+DEFAULT_RESULTS_DIR = app_config.ARCHIVE_DIR
+DEFAULT_OUTPUT = app_config.DEFAULT_DATA_FILE
+OUTPUT_COLUMNS = app_config.OUTPUT_COLUMNS
+
+__all__ = [
+    "OUTPUT_COLUMNS",
+    "EXPERIENCE_ORDER",
+    "parse_salary",
+    "parse_salary_result",
+    "parse_city",
+    "parse_experience",
+    "parse_education",
+    "parse_skills",
+    "clean_description",
+    "display_company",
+    "convert_batch",
+    "dedupe",
+    "write_csv",
+    "main",
 ]
-
-WORK_DAYS_PER_MONTH = 21.75
-WORK_HOURS_PER_DAY = 8
-
-# 经验标签 -> 系统 EXPERIENCE_ORDER 中的分箱
-EXPERIENCE_MAP = {
-    "在校/应届": "应届/无经验",
-    "在校生": "应届/无经验",
-    "应届生": "应届/无经验",
-    "经验不限": "应届/无经验",
-    "1年以内": "1-3年",
-    "1-3年": "1-3年",
-    "3-5年": "3-5年",
-    "5-10年": "5年以上",
-    "10年以上": "5年以上",
-}
-EXPERIENCE_PATTERN = re.compile(
-    "在校/应届|在校生|应届生|经验不限|1年以内|1-3年|3-5年|5-10年|10年以上"
-)
-EDUCATION_PATTERN = re.compile(
-    "初中及以下|中专/中技|中专|中技|高中及以下|高中|大专|本科|硕士|博士|学历不限"
-)
-# 顺序不可调整：先匹配更特殊的"在校/应届"、"初中及以下"等
-SKILL_SPLIT_PATTERN = re.compile(r"[|｜/、,，;；]+")
-NO_SALARY_WORDS = {"", "-", "面议", "薪资面议", "面议薪资", "none", "nan"}
 
 
 def parse_salary(text) -> tuple[float, float] | tuple[None, None]:
-    """把 BOSS 明文薪资解析为月薪下限/上限（单位：元）。
+    """兼容旧接口：返回 (low, high)，不可用时为 (None, None)。
 
-    支持 15-30K、30-60K·15薪、1.5-2万、8000-12000、300-500元/天、50元/时。
-    无法解析（如"面议"）时返回 (None, None)，后续由 app.py 按设计过滤。
+    解析规则与量纲校验统一在 :mod:`jobanal.parsing`，此处只是取区间的薄包装；
+    需要知道被剔除的原因时用 :func:`parse_salary_result`。
     """
-    if text is None:
+    result = parse_salary_result(text)
+    if not result.ok:
         return None, None
-    raw = str(text).strip()
-    if raw.lower() in NO_SALARY_WORDS:
-        return None, None
-    value = raw.replace("，", ",").replace("～", "-").replace("~", "-").replace("至", "-")
-    value = re.sub(r"[·•]\s*\d+\s*薪", "", value)  # 去掉"·15薪"等多薪信息
-    numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", value)]
-    if not numbers:
-        return None, None
-
-    if "万" in value:
-        unit = 10000
-    elif re.search(r"[kK千]", value):
-        unit = 1000
-    else:
-        unit = 1
-
-    low = numbers[0] * unit
-    high = numbers[1] * unit if len(numbers) > 1 else low
-
-    if re.search(r"(天|日)结|/\s*(天|日)", value):
-        low *= WORK_DAYS_PER_MONTH
-        high *= WORK_DAYS_PER_MONTH
-    elif re.search(r"/\s*(小时|时)", value):
-        low *= WORK_HOURS_PER_DAY * WORK_DAYS_PER_MONTH
-        high *= WORK_HOURS_PER_DAY * WORK_DAYS_PER_MONTH
-
-    if low > high:
-        low, high = high, low
-    return round(low, 2), round(high, 2)
-
-
-def parse_city(location, fallback: str = "") -> str:
-    """location 形如 "杭州·滨江区·长河"，取第一段作为城市。"""
-    text = str(location or "").strip()
-    if not text:
-        return fallback or "未知"
-    return text.split("·")[0].strip() or fallback or "未知"
-
-
-def parse_experience(tags, title: str = "") -> str:
-    """解析经验标签；实习/应届岗常只标学历，此时按标题回退到"应届/无经验"。"""
-    match = EXPERIENCE_PATTERN.search(str(tags or ""))
-    if match:
-        return EXPERIENCE_MAP.get(match.group(0), "未知")
-    if re.search(r"实习|应届|在校", str(title or "")):
-        return "应届/无经验"
-    return "未知"
-
-
-def parse_education(tags) -> str:
-    match = EDUCATION_PATTERN.search(str(tags or ""))
-    return match.group(0) if match else "未知"
-
-
-def parse_skills(text) -> str:
-    if not text:
-        return ""
-    parts = SKILL_SPLIT_PATTERN.split(str(text))
-    return ",".join(part.strip() for part in parts if part.strip())
-
-
-def clean_description(text) -> str:
-    if not text:
-        return ""
-    return re.sub(r"\s+", " ", str(text)).strip()
+    return result.low, result.high
 
 
 def load_details(path: Path) -> dict[str, dict]:
@@ -183,29 +119,53 @@ def iter_job_files(source: Path) -> list[Path]:
     return sorted(source.rglob("boss_jobs_*.json"))
 
 
-def convert_batch(jobs_path: Path, details_path: Path | None) -> tuple[list[dict], dict]:
-    """把一批抓取结果转换为标准记录，并汇报该批次的统计信息。"""
+def convert_batch(
+    jobs_path: Path,
+    details_path: Path | None,
+    *,
+    quarantine: list[dict] | None = None,
+) -> tuple[list[dict], dict]:
+    """把一批抓取结果转换为标准记录，并汇报该批次的统计信息。
+
+    薪资无法解析或超出合理区间的记录会被**隔离**而不是静默丢弃：写入
+    ``quarantine``（若提供）以便离线复核，同时在 stats 里按原因计数。
+    """
     payload = json.loads(jobs_path.read_text(encoding="utf-8"))
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else payload
     details = load_details(details_path) if details_path else {}
     fallback_city = payload.get("city", "") if isinstance(payload, dict) else ""
+    keyword = payload.get("keyword", "") if isinstance(payload, dict) else ""
 
     records = []
-    skipped_no_salary = 0
+    reasons: Counter = Counter()
     for job in jobs:
-        low, high = parse_salary(job.get("salary"))
-        if low is None or high is None:
-            skipped_no_salary += 1
+        salary = parse_salary_result(job.get("salary"))
+        if not salary.ok:
+            reasons[salary.reason] += 1
+            if quarantine is not None:
+                quarantine.append(
+                    {
+                        "job_id": str(job.get("job_id") or ""),
+                        "title": str(job.get("title") or ""),
+                        "company": str(job.get("boss_name") or ""),
+                        "city": parse_city(job.get("location"), fallback_city),
+                        "salary_raw": salary.raw,
+                        "unit_guess": salary.unit,
+                        "reason": salary.reason,
+                        "source_batch": jobs_path.name,
+                        "keyword": keyword,
+                    }
+                )
             continue
         tags = job.get("tags") or job.get("job_labels") or ""
         detail = details.get(str(job.get("job_id")), {})
         records.append(
             {
                 "job_name": str(job.get("title") or "").strip(),
-                "company": str(detail.get("company") or job.get("boss_name") or "").strip(),
+                "company": display_company(job, detail),
                 "city": parse_city(job.get("location"), fallback_city),
-                "salary_low": low,
-                "salary_high": high,
+                "salary_low": salary.low,
+                "salary_high": salary.high,
                 "education": parse_education(tags),
                 "work_years": parse_experience(tags, job.get("title")),
                 "category": str(job.get("company_industry") or "未知").strip(),
@@ -216,11 +176,14 @@ def convert_batch(jobs_path: Path, details_path: Path | None) -> tuple[list[dict
         )
     stats = {
         "file": jobs_path.name,
-        "keyword": payload.get("keyword", "") if isinstance(payload, dict) else "",
+        "keyword": keyword,
         "city": payload.get("city", "") if isinstance(payload, dict) else "",
+        "scraped_at": payload.get("scraped_at", "") if isinstance(payload, dict) else "",
         "raw": len(jobs),
         "converted": len(records),
-        "skipped_no_salary": skipped_no_salary,
+        "skipped_no_salary": sum(reasons.values()),
+        "quarantine_reasons": dict(reasons),
+        "placeholder_company": sum(1 for r in records if is_placeholder_company(r["company"])),
         "with_jd": sum(1 for r in records if r["description"]),
     }
     return records, stats
@@ -262,6 +225,23 @@ def write_csv(records: list[dict], output: Path) -> None:
             writer.writerow(record)
 
 
+def _write_quarantine(rows: list[dict], output: Path) -> None:
+    """把被剔除的薪资异常记录写成独立 CSV，供离线复核（不污染主表）。"""
+    import csv
+
+    if not rows:
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    columns = [
+        "job_id", "title", "company", "city",
+        "salary_raw", "unit_guess", "reason", "source_batch", "keyword",
+    ]
+    with output.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="导入 BOSS 直聘抓取结果到岗位分析系统")
     parser.add_argument("--source", help="抓取结果目录或某个 boss_jobs_*.json 文件")
@@ -288,9 +268,10 @@ def main(argv: list[str] | None = None) -> int:
 
     all_records: list[dict] = []
     batch_stats = []
+    quarantine: list[dict] = []
     for jobs_path in job_files:
         details_path = find_details_file(jobs_path)
-        records, stats = convert_batch(jobs_path, details_path)
+        records, stats = convert_batch(jobs_path, details_path, quarantine=quarantine)
         batch_stats.append(stats)
         all_records.extend(records)
         if not details_path:
@@ -299,11 +280,17 @@ def main(argv: list[str] | None = None) -> int:
             detail_note = details_path.name
         else:
             detail_note = "无匹配 JD"  # 详情文件存在但 job_id 对不上，不强行关联
+        reason_note = ""
+        if stats["quarantine_reasons"]:
+            reason_note = "  隔离:" + ",".join(
+                f"{k}×{v}" for k, v in sorted(stats["quarantine_reasons"].items())
+            )
         print(
             f"  {stats['file']}  "
             f"关键词={stats['keyword'] or '-'}  城市={stats['city'] or '-'}  "
             f"原始 {stats['raw']} 条 -> 有效 {stats['converted']} 条  "
-            f"（无薪资跳过 {stats['skipped_no_salary']}，含 JD {stats['with_jd']}，配对 {detail_note}）"
+            f"（剔除 {stats['skipped_no_salary']}，含 JD {stats['with_jd']}，配对 {detail_note}）"
+            f"{reason_note}"
         )
 
     if args.list:
@@ -316,6 +303,13 @@ def main(argv: list[str] | None = None) -> int:
 
     unique = dedupe(all_records)
     print(f"\n去重前 {len(all_records)} 条，去重后 {len(unique)} 条")
+
+    if quarantine:
+        reason_total = Counter(item["reason"] for item in quarantine)
+        print(f"薪资异常隔离 {len(quarantine)} 条：{dict(reason_total)}")
+        quarantine_path = Path(args.output).with_name("salary_quarantine.csv")
+        _write_quarantine(quarantine, quarantine_path)
+        print(f"隔离明细已写入 {quarantine_path}（可离线复核，不进主表）")
 
     if not unique:
         print("[错误] 没有可导入的数据", file=sys.stderr)

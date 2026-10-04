@@ -6,7 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError as exc:  # pragma: no cover - 取决于本地是否装了 pandas
+    raise unittest.SkipTest(
+        "本模块测试 Flask + pandas 看板，需要先安装 pandas："
+        "pip install -r requirements.txt（原始错误：%s）" % exc
+    ) from exc
 
 import app
 import boss_import
