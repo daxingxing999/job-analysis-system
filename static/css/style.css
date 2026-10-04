@@ -446,3 +446,14 @@ tbody tr:hover {
 .boot-error[hidden] {
   display: none;
 }
+
+/* 图表卡片右上角的补充说明（如趋势的时间跨度与快照数） */
+.chart-hint {
+  color: #6b7c8f;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.chart-card[hidden] {
+  display: none;
+}

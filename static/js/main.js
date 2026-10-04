@@ -183,6 +183,34 @@ function renderPieChart(id, data) {
   }, true);
 }
 
+/**
+ * 采集趋势折线图（多序列）。数据来自 /api/trends，即 SQLite 的 postings 表。
+ * 数据库不存在时由调用方给出提示并隐藏卡片，不在这里报错。
+ */
+function renderLineChart(id, dates, series) {
+  const chart = chartFor(id);
+  chart.setOption({
+    animation: false,
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0, textStyle: { color: '#526579' } },
+    grid: { left: 55, right: 25, top: 45, bottom: 40, containLabel: true },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: (dates || []).map((day) => String(day).slice(5)),
+      axisLabel: { color: '#526579' },
+    },
+    yAxis: { type: 'value', axisLabel: { color: '#526579' } },
+    series: (series || []).map((item) => ({
+      name: safeChartName(item.name),
+      type: 'line',
+      smooth: true,
+      showSymbol: true,
+      data: (item.data || []).map((value) => Number(value) || 0),
+    })),
+  }, true);
+}
+
 function renderJobTable(data) {
   const tbody = document.getElementById('jobTableBody');
   tbody.replaceChildren();
@@ -274,6 +302,33 @@ async function loadDashboard() {
   }
 }
 
+/**
+ * 加载采集趋势。与看板统计不同，它读的是 SQLite 快照表，
+ * 因此不随筛选条件变化；不可用时隐藏卡片并说明原因。
+ */
+async function loadTrends() {
+  const card = document.getElementById('trendCard');
+  const hint = document.getElementById('trendHint');
+  try {
+    const data = await fetchJson('/api/trends');
+    if (!data.available) {
+      if (card) card.hidden = true;
+      if (hint) hint.textContent = data.reason || '';
+      return;
+    }
+    if (card) card.hidden = false;
+    const span = data.dates.length ? `${data.dates[0]} ~ ${data.dates[data.dates.length - 1]}` : '';
+    const totals = (data.totals || []).reduce((sum, value) => sum + value, 0);
+    if (hint) {
+      hint.textContent = `${span} · 共 ${totals} 条快照 · 数据库 ${data.coverage?.jobs || 0} 个岗位`;
+    }
+    renderLineChart('trendChart', data.dates, data.skills);
+  } catch (error) {
+    if (card) card.hidden = true;
+    if (hint) hint.textContent = `趋势不可用：${error.message}`;
+  }
+}
+
 applyFilterBtn.addEventListener('click', loadDashboard);
 keywordInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') loadDashboard();
@@ -306,6 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadDataSource();
     await loadFilterOptions();
     await loadDashboard();
+    await loadTrends();
   } catch (error) {
     resultHint.textContent = error.message;
   }

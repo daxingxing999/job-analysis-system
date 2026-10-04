@@ -10,20 +10,36 @@
 
 ```
 job-analysis-system/
-├── app.py                  # Flask 后端：清洗、统计、筛选、导出
+├── cli.py                  # 统一命令行入口：import / verify / trends / coverage / csv
+├── app.py                  # Flask 后端：清洗、统计、筛选、导出、趋势接口
+├── jobanal/                # 核心包（只用标准库，可独立测试）
+│   ├── parsing.py          #   字段解析与薪资量纲校验的唯一入口
+│   ├── taxonomy.py         #   工种族词表与匹配顺序（唯一来源）
+│   ├── classify.py         #   岗位标题 -> 工种族 分类器
+│   ├── store.py            #   SQLite 数据层：落库、快照、趋势聚合
+│   └── config.py           #   路径与常量集中定义
 ├── boss_import.py          # 抓取结果 JSON -> 系统标准 CSV
-├── crawl_and_import.py     # 一键：抓取 + 导入（推荐入口）
+├── merge_jobs.py           # 按 job_id 合并全部归档，取信息最全的快照
+├── crawl_and_import.py     # 一键：单次抓取 + 导入（推荐入口）
+├── smart_crawl.py          # 覆盖度驱动的批量调度器（城市 × 工种族）
+├── batch_crawl.py          # 早先的多关键词×多城市批量抓取
 ├── requirements.txt
 ├── data/
 │   ├── boss_jobs.csv       # 真实抓取数据（默认数据源，当前 8274 条）
+│   ├── jobs.db             # SQLite 库（由 cli.py import 生成，可选但推荐）
+│   └── crawl_ledger.json   # 智能调度账本
 ├── templates/index.html    # 前端页面
-├── static/                 # css / js
+├── static/                 # css / js；vendor/ 内置 ECharts（离线可用）
 ├── scraper/                # BOSS 直聘 CDP 抓取脚本（第三方，见 docs/THIRD_PARTY_LICENSE）
 │   ├── scripts/boss_cdp_raw.py
 │   └── data/city_codes.json
 ├── 抓取结果/                # 历次抓取归档，导入时自动累加
-└── docs/                   # 毕业设计论文等文档
+├── tools/                  # 校准与诊断脚本（非主链路）
+└── docs/                   # 毕业设计论文、代码评审报告等文档
 ```
+
+> 各脚本之间共享的规则（薪资解析、经验分箱、工种词表、路径常量）都收敛在
+> `jobanal/` 包里，不再各写一份。`tests/` 有对应的回归用例。
 
 ## 一、跑起来看效果
 
@@ -136,18 +152,56 @@ python3 boss_import.py --dry-run                         # 只看统计不写文
 | `education` | tags | 匹配学历标签 |
 | `work_years` | tags | 归一到 `应届/无经验`、`1-3年`、`3-5年`、`5年以上`；实习岗标签缺经验时按标题回退 |
 | `category` | company_industry | — |
-| `skills` | skills | `\|` 分隔转逗号分隔 |
+| `skills` | skills | `\|` 分隔转逗号分隔；福利/条件描述（「不接受居家办公」「五险一金」）会被剔除，不当作技能 |
 | `description` | 详情 jd | 按 `job_id` 关联，换行压平 |
+
+> **薪资异常会被隔离而不是静默入库**：月薪低于 1000 或高于 10 万的、上下限跨度
+> 超过 50 倍的、量纲冲突的（同时出现「元/天」和「元/时」）都会带原因写进
+> `data/salary_quarantine.csv`，不进主表。此前「95700-104400」这类疑似年包
+> 与「250000-260000」这类极端值会直接把看板平均薪资抬高。
+
+## 三之二、入库并查看趋势（推荐）
+
+CSV 里没有采集时间，所以「技能需求随时间怎么变」这类分析只能靠 SQLite。
+落库后看板会多出一张「采集趋势」折线图：
+
+```bash
+python3 cli.py import --archive 抓取结果        # 归档 -> data/jobs.db（幂等，可反复执行）
+python3 cli.py verify                            # 核对数据质量与完整性
+python3 cli.py trends --limit 6                  # 命令行直接看趋势
+python3 cli.py coverage --limit 10               # 城市/行业覆盖与顶部岗位
+python3 cli.py csv --output data/export.csv      # 从库里导出
+```
+
+`data/jobs.db` 是**生成物、不入库**（`.gitignore` 已忽略，约 5 MB），
+第一次跑 `import` 会自动建好；没有它时看板照常工作，只是不显示趋势图。
+
+关于口径的两点说明：
+
+- `import` **默认不读** `抓取结果/boss_jobs_all.json`——它是
+  `consolidate_archive.py` 生成的一次性汇总快照，与各批次内容重叠。如果历次批次
+  已被清理、只剩这个汇总文件，加 `--include-derived` 才能把那部分岗位找回来；
+  代价是它在趋势里会被算作同一个采集日。
+- 时间戳优先取批次 JSON 里的 `scraped_at`（派生文件另认 `generated_at`），
+  其次取批次目录名里的日期，都拿不到就留空。**不会拿文件修改时间兜底**，
+  否则把仓库克隆到新机器后，趋势图的最后一根柱子会被顶到「今天」。
 
 ## 四、功能一览
 
-- **数据清洗**：UTF-8/GB18030 自动识别；去空、去重、薪资解析、经验分箱
+- **数据清洗**：UTF-8/GB18030 自动识别；去空、去重、薪资解析（含量纲校验与异常隔离）、经验分箱
 - **多维筛选**：城市、学历、经验、行业、关键词、薪资区间
 - **统计看板**：岗位总量、平均薪资、薪资/学历/经验/城市/行业/企业分布、技能与关键词
+- **采集趋势**：技能需求与城市岗位量随采集日的变化（需先落库，见第三之二节）
+- **数据质量核对**：`cli.py verify` 报告 JD 覆盖率、匿名公司占比、重复抓到次数等
 - **岗位详情**：点击列表查看完整字段与职位描述
-- **数据导入**：页面上传 CSV/Excel，或命令行转换抓取结果
+- **数据导入**：页面上传 CSV/Excel，或命令行转换抓取结果、导入 SQLite
 - **结果导出**：按当前筛选条件导出 CSV / Excel
 - **文本分析**：优先 `jieba` 分词，未安装时降级为规则分词，页面会标明
+
+> ⚠️ **关于文本分析的现状**：抓取链路（`smart_crawl.py`、`batch_crawl.py`）写死了
+> `--no-detail`，归档里因此没有职位描述，当前 `data/boss_jobs.csv` 的 8274 行
+> `description` 全为空。所以页面上「职位文本高频词」实际取的是技能标签，
+> 词云能力要等抓取时带上 `--details N` 才有数据。`cli.py verify` 会主动提示这一点。
 
 ## 五、主要接口
 
@@ -155,6 +209,7 @@ python3 boss_import.py --dry-run                         # 只看统计不写文
 | --- | --- |
 | `/api/dashboard` | 看板全部统计 |
 | `/api/options` | 筛选项 |
+| `/api/trends` | 采集趋势（技能/城市按天）；未建库时返回 `available: false` |
 | `/api/jobs/<job_id>` | 岗位详情 |
 | `/export/csv` | 按筛选条件导出 CSV |
 | `/export/excel` | 按筛选条件导出 Excel |
@@ -189,6 +244,10 @@ python -m pip install -r requirements.txt
 
 ## 八、变更记录
 
+- 本轮改造（分支 `feature/review-hardening`）：新增 `jobanal/` 核心包与 SQLite
+  数据层、薪资量纲校验与异常隔离、采集趋势图、统一 CLI（`cli.py`），修复智能调度
+  的零结果永久拉黑与切片补不满，本地化 ECharts，补齐 CI 与 LICENSE。
+  详见 [`docs/代码评审报告.md`](./docs/代码评审报告.md)。
 - [2026-09-29 项目变更说明](./docs/变更说明_2026-09-29.md)：移除示例数据回退并补齐抓取依赖。
 - [2026-09-28 项目变更说明](./docs/变更说明_2026-09-28.md)：岗位数据合并、macOS 启动脚本及 Python 字节码说明。
 
@@ -199,6 +258,16 @@ python -m pip install -r requirements.txt
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+当前共 97 个用例（其中 1 个需要 pandas，缺失时会以 SkipTest 明示）：
+
+| 测试文件 | 覆盖内容 |
+| --- | --- |
+| `tests/test_parsing.py` | 薪资量纲、异常隔离、字段归一、公司名口径 |
+| `tests/test_smart_crawl.py` | 调度硬约束、切片累计上限、账本原子写、分类器 |
+| `tests/test_store.py` | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
+| `tests/test_app.py` | 看板接口、CSV 缓存与并发加载（需 pandas） |
+| `tests/test_merge_jobs.py` | 归档合并与损坏文件的处理 |
 
 ## 十、后续 Agent 工作流
 

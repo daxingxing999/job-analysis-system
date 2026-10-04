@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 -- 快照表：同一岗位被多次抓到就多行，用来做时间序列与挂岗时长
+-- 不存原始 JSON：原始数据本就完整保存在 抓取结果/ 里，重复存一份会让库体积
+-- 膨胀数倍（实测 8233 岗位时 3 MB -> 20 MB）。需要溯源时去归档目录看。
 CREATE TABLE IF NOT EXISTS postings (
     job_id      TEXT NOT NULL,
     scraped_at  TEXT NOT NULL,
@@ -72,7 +74,6 @@ CREATE TABLE IF NOT EXISTS postings (
     city        TEXT,
     skills      TEXT,
     salary_raw  TEXT,
-    raw_json    TEXT,
     PRIMARY KEY (job_id, scraped_at, source_batch)
 );
 
@@ -149,6 +150,10 @@ def init_db(conn: sqlite3.Connection) -> None:
 _MIGRATIONS = {
     "postings": {"skills": "ALTER TABLE postings ADD COLUMN skills TEXT"},
 }
+# 需要移除的冗余列（曾用于存原始 JSON，体积代价过大且归档里已有原文）
+_DROP_COLUMNS = {
+    "postings": ["raw_json"],
+}
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -162,6 +167,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         for column, statement in columns.items():
             if column not in existing:
                 conn.execute(statement)
+    for table, columns in _DROP_COLUMNS.items():
+        info = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if not info:
+            continue
+        droppable = [c for c in columns if c in info]
+        if droppable:
+            # SQLite 3.35+ 支持 DROP COLUMN；老版本则退化为 VACUUM 后保留
+            for column in droppable:
+                try:
+                    conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+                except sqlite3.OperationalError:
+                    pass
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -402,12 +419,11 @@ def _insert_posting(conn: sqlite3.Connection, row: dict, job: dict,
     ).fetchone() is not None
     conn.execute(
         "INSERT OR REPLACE INTO postings"
-        "(job_id, scraped_at, source_batch, keyword, city, skills, salary_raw, raw_json)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "(job_id, scraped_at, source_batch, keyword, city, skills, salary_raw)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             row["job_id"], scraped_at, batch_name, keyword, row["city"],
             row["skills"], row["salary_raw"],
-            json.dumps(job, ensure_ascii=False, separators=(",", ":")),
         ),
     )
     return not existed

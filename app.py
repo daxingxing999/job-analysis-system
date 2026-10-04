@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import sqlite3
 import threading
 from collections import Counter
 from pathlib import Path
@@ -15,10 +16,15 @@ try:
 except ImportError:  # pragma: no cover - exercised when the optional dependency is absent
     jieba = None
 
+from jobanal import store as job_store
+
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_PATH = BASE_DIR / "data" / "boss_jobs.csv"
 # 可用环境变量指定其它标准岗位 CSV。
 DATA_PATH = Path(os.environ.get("ZOUYE_DATA_FILE") or DEFAULT_DATA_PATH).expanduser()
+# 可选：SQLite 数据库（由 cli.py import 生成）。存在时看板多出「采集趋势」，
+# CSV 仍是默认数据源，所以没建库的环境行为完全不变。
+DB_PATH = Path(os.environ.get("ZOUYE_DB_FILE") or (BASE_DIR / "data" / "jobs.db")).expanduser()
 REQUIRED_COLUMNS = (
     "job_name",
     "company",
@@ -509,6 +515,45 @@ def api_job_detail(job_id: int):
 @app.route("/api/dashboard")
 def api_dashboard():
     return jsonify(dashboard_payload(apply_filters(load_data(), request.args), _limit(10)))
+
+
+@app.route("/api/trends")
+def api_trends():
+    """采集趋势（技能 / 城市随采集日的变化）。
+
+    数据来自 SQLite（postings 表按 scraped_at 聚合）—— 标准 CSV 里没有
+    采集时间字段，所以这一步只能由 `python cli.py import` 落库后提供。
+    数据库不存在时返回 available=False，前端据此隐藏图表而不是报错。
+    """
+    limit = _limit(default=5, maximum=10)
+    if not DB_PATH.is_file():
+        return jsonify({
+            "available": False,
+            "reason": "尚未生成 SQLite 数据库，趋势不可用",
+            "hint": "python cli.py import --archive 抓取结果",
+        })
+
+    conn = None
+    try:
+        conn = job_store.connect(DB_PATH)
+        skill = job_store.trend_by_skill(conn, limit=limit)
+        city = job_store.trend_by_city(conn, limit=limit)
+        coverage = job_store.coverage_stats(conn)
+    except sqlite3.Error as exc:
+        return jsonify({"available": False, "reason": f"读取数据库失败：{exc}"}), 503
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return jsonify({
+        "available": bool(skill["dates"]),
+        "reason": "" if skill["dates"] else "数据库里没有带采集时间的快照",
+        "dates": skill["dates"],
+        "totals": skill.get("totals", []),
+        "skills": skill["series"],
+        "cities": city["series"],
+        "coverage": coverage,
+    })
 
 
 def export_frame() -> pd.DataFrame:
