@@ -46,8 +46,16 @@ def resolve_db_file() -> Path:
 
 JOB_BATCH_GLOB = "boss_jobs_*.json"
 DETAIL_BATCH_GLOB = "boss_details_*.json"
+# 派生汇总文件：consolidate_archive.py 把全部批次整合成这些文件。
+# 它们本身没有 scraped_at，导入时必须跳过 —— 否则会被按文件 mtime 落库，
+# 把时间序列的最后一根柱子顶到「导入当天」，趋势图直接失真。
+DERIVED_ARCHIVE_FILES = {"boss_jobs_all.json", "boss_jobs_all.csv"}
 # 批次文件里的时间戳，如 boss_jobs_杭州_backend_20260928_202537.json
 BATCH_STAMP_PATTERN = r"(\d{8}_\d{4,6})"
+
+
+def is_derived_archive(path) -> bool:
+    return getattr(path, "name", "") in DERIVED_ARCHIVE_FILES
 
 # 输出 CSV 的列顺序（导入链路的事实标准）
 OUTPUT_COLUMNS = [

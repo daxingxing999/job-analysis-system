@@ -240,7 +240,28 @@ def parse_skills(text) -> str:
     if not text:
         return ""
     parts = SKILL_SPLIT_PATTERN.split(str(text))
-    return ",".join(part.strip() for part in parts if part.strip())
+    return ",".join(part.strip() for part in parts if part.strip() and _is_real_skill(part))
+
+
+# 这些「标签」来自抓取器的 skills 字段，但其实是福利/条件描述而不是技能。
+# 实测出现「不接受居家办公」「五险一金」这类词被当成热门技能排到前三，
+# 会把技能榜污染成福利榜，所以在解析阶段就剔除。
+NON_SKILL_PATTERNS = (
+    re.compile(r"居家办公|远程办公|在家办公|弹性工作|周末双休|双休|五险|公积金|社保|包吃|包住"),
+    re.compile(r"^(不|无|免|非)?(需要|接受|限|考虑)"),
+    re.compile(r"接受(应届|无经验|实习|小白)"),
+    re.compile(r"^(学历|经验|年龄|性别|专业)"),
+    re.compile(r"^(福利|待遇|薪资|工资)"),
+    re.compile(r"^\d+[-~至]\d+"),          # 「3-5年」这类年限
+    re.compile(r"(以上|以下)$"),
+)
+
+
+def _is_real_skill(text: str) -> bool:
+    value = text.strip()
+    if not value or len(value) > 24:
+        return False
+    return not any(pattern.search(value) for pattern in NON_SKILL_PATTERNS)
 
 
 def clean_description(text) -> str:

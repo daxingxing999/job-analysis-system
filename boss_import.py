@@ -114,9 +114,18 @@ def find_details_file(jobs_path: Path) -> Path | None:
 
 
 def iter_job_files(source: Path) -> list[Path]:
+    """列出待导入的批次文件。
+
+    跳过 consolidate_archive.py 生成的派生汇总文件（boss_jobs_all.json）：
+    它的内容就是各批次之和，且没有 scraped_at，导入会被重复计数、
+    时间序列也会被顶到「导入当天」。
+    """
     if source.is_file():
-        return [source]
-    return sorted(source.rglob("boss_jobs_*.json"))
+        return [] if app_config.is_derived_archive(source) else [source]
+    return [
+        path for path in sorted(source.rglob(app_config.JOB_BATCH_GLOB))
+        if not app_config.is_derived_archive(path)
+    ]
 
 
 def convert_batch(

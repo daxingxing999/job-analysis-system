@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import boss_import as bi  # 复用解析规则：parse_salary / parse_city / parse_*
+from jobanal import config as app_config
 
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / "抓取结果"
@@ -67,7 +68,12 @@ def load_all() -> tuple[dict[str, list[dict]], Counter, Counter]:
     groups: dict[str, list[dict]] = defaultdict(list)
     keywords: Counter = Counter()
     cities: Counter = Counter()
-    paths = sorted(ARCHIVE.rglob("boss_jobs_*.json"))
+    # 跳过 consolidate_archive.py 生成的派生汇总文件：它的内容就是各批次之和，
+    # 纳入统计会把同一岗位重复计入「被重复抓到几次」。
+    paths = [
+        path for path in sorted(ARCHIVE.rglob(app_config.JOB_BATCH_GLOB))
+        if not app_config.is_derived_archive(path)
+    ]
     if not paths:
         raise ArchiveLoadError(f"在归档目录中没有找到 boss_jobs_*.json：{ARCHIVE}")
 
