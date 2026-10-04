@@ -5,7 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>招聘岗位需求分析与可视化系统</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <!--
+      ECharts 优先用本地副本：以前直接引 jsdelivr CDN，校园网或断网时整页图表全空。
+      本地加载失败（文件缺失等）时自动回退到 CDN，保证离线优先、在线兜底。
+    -->
+    <script src="{{ url_for('static', filename='vendor/echarts.min.js') }}"></script>
+    <script>
+      if (typeof echarts === 'undefined') {
+        document.write(
+          '<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"><\/script>'
+        );
+      }
+    </script>
   </head>
   <body>
     <div class="page-wrap">
@@ -16,6 +27,8 @@
         </div>
         <div class="header-badge">实时数据分析</div>
       </header>
+
+      <p id="bootError" class="boot-error" hidden></p>
 
       <section class="data-source-panel">
         <div>
@@ -29,7 +42,7 @@
             <input id="dataFileInput" type="file" accept=".csv,.xlsx,.xls" />
           </label>
           <button id="uploadDataBtn" type="button">上传并分析</button>
-          <button id="resetDataBtn" class="secondary" type="button">恢复示例数据</button>
+          <button id="resetDataBtn" class="secondary" type="button">恢复默认数据源</button>
         </div>
       </section>
 

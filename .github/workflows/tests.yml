@@ -1,0 +1,59 @@
+# =============================================================================
+# CI：单元测试（GitHub Actions）
+#
+# 项目：招聘岗位需求分析与可视化系统（Flask + pandas + ECharts）
+# 测试框架：Python 标准库 unittest（见 README「九、运行测试」与 AGENTS.md 第 4 节）
+# =============================================================================
+name: 测试
+
+# 触发时机：推送到任意分支、以及任何向本仓库发起的 Pull Request
+on:
+  push:
+  pull_request:
+
+# 顶层环境变量：仓库中存在中文文件名/目录（如 启动系统.command、抓取结果/），
+# Linux 运行器默认编码可能是 ASCII，必须显式声明 UTF-8，
+# 否则中文路径或中文测试输出在 CI 中会触发 UnicodeEncodeError / 乱码。
+env:
+  PYTHONIOENCODING: utf-8
+  LANG: C.UTF-8
+
+# 最小权限原则：CI 只读取仓库内容，不需要写权限
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # 某个 Python 版本失败时，其余版本继续跑完，便于一次性看到全部结果
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      # 第 1 步：检出仓库代码
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 第 2 步：安装指定版本的 Python，并开启 pip 依赖缓存
+      #         （缓存键跟随 requirements.txt，依赖不变时命中缓存，加快构建）
+      - name: 安装 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # 第 3 步：安装项目依赖
+      #         Flask / pandas / jieba / openpyxl / requests / websocket-client
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+
+      # 第 4 步：运行全部单元测试
+      #         测试文件直接 import app / boss_import / merge_jobs / smart_crawl
+      #         以及 jobanal 包，因此必须在仓库根目录执行。
+      - name: 运行单元测试
+        run: python -m unittest discover -s tests -v

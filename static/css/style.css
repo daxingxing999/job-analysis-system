@@ -430,3 +430,19 @@ tbody tr:hover {
     flex-direction: column;
   }
 }
+
+/* 启动异常提示条：图表库加载失败等致命问题用醒目样式说明原因 */
+.boot-error {
+  margin: 0 0 16px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 1px solid #f0b7b7;
+  background: #fff4f4;
+  color: #8c2b2b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.boot-error[hidden] {
+  display: none;
+}

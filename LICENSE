@@ -1,0 +1,46 @@
+# =============================================================================
+# 中文说明（项目背景与使用约定，非 MIT 许可证条款本身）
+#
+# 1. 本项目《招聘岗位需求分析与可视化系统》为毕业设计 / 课程设计作品，
+#    作者：daxingxing999。
+# 2. 仓库内的岗位数据由 scraper/ 下的抓取脚本从公开招聘页面采集，
+#    仅用于学习、研究与教学演示，不得用于任何商业用途，不得转售，
+#    也不得将数据二次打包出售或提供给付费服务。
+# 3. 数据版权归原始招聘平台及发布企业所有。使用本项目时请遵守目标网站的
+#    robots.txt 与服务条款，保持低频、小批量访问（单次不超过 300 条）。
+# =============================================================================
+
+MIT License
+
+Copyright (c) 2026 daxingxing999
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+# =============================================================================
+# 第三方组件（Third-Party Components）
+#
+# scraper/ 目录下的抓取脚本（scraper/scripts/boss_cdp_raw.py 等）来自第三方
+# 开源项目 boss-zhipin-scraper（https://github.com/eatmoreduck/boss-zhipin-scraper）。
+# 该项目同样以 MIT 许可证发布，许可证原文见 docs/THIRD_PARTY_LICENSE
+# （Copyright (c) 2026 eatmoreduck）。
+#
+# 第三方代码的版权归原作者所有，其分发与使用继续遵循 MIT 许可证；
+# 上方的 MIT 条款仅适用于本项目作者自行编写的部分，不改变、也不替代
+# 第三方组件的许可条件。再分发本项目时请一并保留 docs/THIRD_PARTY_LICENSE。
+# =============================================================================

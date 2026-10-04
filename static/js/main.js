@@ -137,10 +137,14 @@ function renderCompanyList(data) {
 function chartFor(id) {
   if (!charts.has(id)) {
     charts.set(id, echarts.init(document.getElementById(id)));
-    window.addEventListener('resize', () => charts.get(id).resize());
   }
   return charts.get(id);
 }
+
+// 只注册一个 resize 监听：以前每个图表各注册一次，7 个图表就有 7 个监听器。
+window.addEventListener('resize', () => {
+  charts.forEach((chart) => chart.resize());
+});
 
 function safeChartName(value) {
   return String(value || '').replace(/[<>&"']/g, (char) => ({
@@ -283,7 +287,21 @@ document.getElementById('closeDetailBtn').addEventListener('click', () => detail
 uploadDataBtn.addEventListener('click', uploadData);
 resetDataBtn.addEventListener('click', resetData);
 
+function showBootError(message) {
+  const banner = document.getElementById('bootError');
+  if (!banner) return;
+  banner.textContent = message;
+  banner.hidden = false;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  // 图表库缺失时给出明确提示，而不是让整页静默空白
+  if (typeof echarts === 'undefined') {
+    showBootError(
+      '图表库 ECharts 未能加载：本地 static/vendor/echarts.min.js 不可用，'
+      + 'CDN 回退也失败了。数据表格仍可正常使用；恢复图表请检查该文件是否存在。'
+    );
+  }
   try {
     await loadDataSource();
     await loadFilterOptions();
