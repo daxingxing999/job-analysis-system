@@ -1,123 +1,70 @@
-"""分析归档数据的重复情况，判断"合并"能挽回多少数据。
+"""归档重复情况分析（薄壳）。
 
-只读分析，不修改任何文件。回答三个问题：
-  1. 25834 条原始 -> 4341 条，损失发生在哪一步？
-  2. 重复的记录之间，字段内容有没有差异（是否值得合并而不是直接丢弃）？
+实现已合并到 :mod:`jobanal.archive` 与 ``tools/archive_report.py``：
+原先本脚本要完整扫描归档 2 遍，``analyze_yield.py`` 又扫 3 遍，且两边
+各写了一套关键词/城市统计。现在改为一处实现、单遍扫描。
+
+本文件保留为兼容入口，回答的问题不变：
+  1. 原始记录到唯一岗位，损失发生在哪一步？
+  2. 重复快照之间字段有没有差异（值不值得合并而不是直接丢弃）？
   3. 有多少记录其实没有 job_id，只能靠业务主键去重？
+
+用法
+    python3 analyze_duplicates.py
+    python3 tools/archive_report.py --output data/archive_report.md   # 更完整的报告
 """
 
-import json
+from __future__ import annotations
+
 import sys
-from collections import Counter, defaultdict
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
-ARCHIVE = BASE / "抓取结果"
+sys.path.insert(0, str(BASE))
 
-files = sorted(ARCHIVE.rglob("boss_jobs_*.json"))
-print("批次文件数:", len(files))
+from jobanal import archive as archive_mod  # noqa: E402
 
-total = 0
-no_job_id = 0
-records = []          # (job_id, 业务主键, 原始dict, 来源文件)
-per_file = []
 
-for path in files:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print("  读取失败", path.name, exc)
-        continue
-    jobs = payload.get("jobs", []) if isinstance(payload, dict) else payload
-    per_file.append((path.name, len(jobs)))
-    for job in jobs:
-        total += 1
-        jid = str(job.get("job_id") or "").strip()
-        if not jid:
-            no_job_id += 1
-        key = (
-            str(job.get("title") or "").strip(),
-            str(job.get("boss_name") or "").strip(),
-            str(job.get("location") or "").split("·")[0].strip(),
-            str(job.get("salary") or "").strip(),
-        )
-        records.append((jid, key, job, path.name))
+def main() -> int:
+    archive = BASE / "抓取结果"
+    if not archive.exists():
+        print(f"[错误] 找不到归档目录：{archive}", file=sys.stderr)
+        return 1
 
-print("原始记录总数:", total)
-print("没有 job_id 的记录:", no_job_id)
-print()
+    scan = archive_mod.scan_archive(archive)
+    if scan.batches == 0:
+        print(f"[错误] 在 {archive} 下没有找到可读的批次文件", file=sys.stderr)
+        return 1
 
-# 1. 唯一 job_id
-by_id = defaultdict(list)
-by_key = defaultdict(list)
-for jid, key, job, src in records:
-    if jid:
-        by_id[jid].append((job, src))
-    by_key[key].append((job, src))
+    print("批次文件数:", scan.batches)
+    print("原始记录总数:", scan.raw_records)
+    print("没有 job_id 的记录:", scan.records_without_job_id)
+    print("唯一 job_id 数:", scan.unique_jobs)
+    print("唯一业务主键数:", len(scan.business_keys))
+    print("无薪资/面议（导入时被过滤）:", scan.salary_missing)
+    print()
 
-print("唯一 job_id 数:", len(by_id))
-print("唯一业务主键数:", len(by_key))
-print()
+    print("同一 job_id 出现次数分布（前 12）:")
+    for times, count in archive_mod.duplicate_distribution(scan):
+        print("   出现 %-3d 次: %d 个岗位" % (times, count))
+    print()
 
-# 2. 重复倍数分布
-dup = Counter(len(v) for v in by_id.values())
-print("同一 job_id 出现次数分布（前 12）:")
-for n, c in sorted(dup.items())[:12]:
-    print("   出现 %-3d 次: %d 个岗位" % (n, c))
-print()
+    diffs, samples = archive_mod.field_differences(scan)
+    print("重复组内字段出现差异的次数统计:")
+    if diffs:
+        for name, count in diffs.most_common():
+            print("   %-18s %d 次" % (name, count))
+    else:
+        print("   （重复快照之间没有任何字段差异）")
+    print()
+    for job_id, varying in samples:
+        print(f"  --- 重复样本 {job_id} ---")
+        for name, values in varying.items():
+            print("     %-18s 不同值: %s" % (name, values))
+    print()
+    print("更完整的报告（含城市/关键词收益率）：python3 tools/archive_report.py --output data/archive_report.md")
+    return 0
 
-# 3. 重复记录之间字段是否有差异 -> 决定值不值得"合并"
-FIELDS = ["title", "salary", "location", "company_industry", "skills", "tags", "boss_name"]
-diff_count = Counter()
-multi = [v for v in by_id.values() if len(v) > 1]
-print("有重复的 job_id 组数:", len(multi))
 
-sample_shown = 0
-for group in multi:
-    first = group[0][0]
-    for job, _ in group[1:]:
-        for f in FIELDS:
-            a = str(first.get(f) or "").strip()
-            b = str(job.get(f) or "").strip()
-            if a != b:
-                diff_count[f] += 1
-    if sample_shown < 3 and len(group) > 1:
-        # 展示一组样本看看差异长什么样
-        sample_shown += 1
-        print()
-        print("  --- 重复样本 %d（同一 job_id 出现 %d 次）---" % (sample_shown, len(group)))
-        for f in FIELDS:
-            vals = []
-            for job, _ in group[:4]:
-                v = str(job.get(f) or "").strip()
-                if v not in vals:
-                    vals.append(v)
-            if len(vals) > 1:
-                print("     %-18s 不同值: %s" % (f, vals[:3]))
-print()
-print("重复组内字段出现差异的次数统计:")
-for f, c in diff_count.most_common():
-    print("   %-18s %d 次" % (f, c))
-print()
-
-# 4. 无薪资记录数（会被 convert_batch 丢弃）
-no_salary = sum(1 for _, _, job, _ in records
-                if not str(job.get("salary") or "").strip()
-                or str(job.get("salary")).strip() in ("", "-", "面议"))
-print("无薪资/面议（导入时被过滤）:", no_salary)
-print()
-
-# 5. 每批次的关键词/城市，看看是不是同一组合反复抓
-cities = Counter()
-keywords = Counter()
-for path in files:
-    try:
-        p = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(p, dict):
-            cities[p.get("city", "?")] += 1
-            keywords[p.get("keyword", "?")] += 1
-    except Exception:
-        pass
-print("批次涉及城市数:", len(cities), " 关键词数:", len(keywords))
-print("城市 Top10:", dict(cities.most_common(10)))
-print("关键词:", dict(keywords.most_common(20)))
+if __name__ == "__main__":
+    raise SystemExit(main())
