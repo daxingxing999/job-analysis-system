@@ -290,23 +290,32 @@ function renderJobTable(data) {
     button.type = 'button';
     button.className = 'detail-btn';
     button.textContent = '详情';
-    button.addEventListener('click', () => showDetail(item.job_id));
+    button.addEventListener('click', () => showDetail(item));
     actionCell.append(button);
     row.append(actionCell);
     tbody.append(row);
   });
 }
 
-async function showDetail(jobId) {  try {
-    const item = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`);
-    document.getElementById('detailTitle').textContent = item.job_name || '岗位详情';
+/**
+ * 打开岗位详情。
+ * 优先用稳定标识 job_key 取详情 —— 行号式的 job_id 每次重新导入都会漂移。
+ */
+async function showDetail(item) {
+  const key = item && item.job_key ? String(item.job_key) : '';
+  const url = key
+    ? `/api/jobs/by-key/${encodeURIComponent(key)}`
+    : `/api/jobs/${encodeURIComponent(item.job_id)}`;
+  try {
+    const detail = await fetchJson(url);
+    document.getElementById('detailTitle').textContent = detail.job_name || '岗位详情';
     detailContent.replaceChildren();
     const fields = [
-      ['公司', item.company], ['城市', item.city],
-      ['薪资', formatSalaryRange(item.salary_low, item.salary_high)],
-      ['学历', item.education], ['经验', item.experience],
-      ['行业/类别', item.category], ['技能', item.skills],
-      ['职位描述', item.description || '暂无职位描述'],
+      ['公司', detail.company], ['城市', detail.city],
+      ['薪资', formatSalaryRange(detail.salary_low, detail.salary_high)],
+      ['学历', detail.education], ['经验', detail.experience],
+      ['行业/类别', detail.category], ['技能', detail.skills],
+      ['职位描述', detail.description || '暂无职位描述'],
     ];
     fields.forEach(([label, value]) => {
       const row = document.createElement('p');
@@ -315,6 +324,18 @@ async function showDetail(jobId) {  try {
       row.append(title, document.createTextNode(value == null ? '未知' : value));
       detailContent.append(row);
     });
+    if (detail.job_link) {
+      const row = document.createElement('p');
+      const title = document.createElement('strong');
+      title.textContent = '原始岗位：';
+      const link = document.createElement('a');
+      link.href = detail.job_link;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = '在 BOSS 直聘打开';
+      row.append(title, link);
+      detailContent.append(row);
+    }
     detailDialog.showModal();
   } catch (error) {
     resultHint.textContent = error.message;

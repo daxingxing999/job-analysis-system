@@ -29,6 +29,9 @@
 - `merge_jobs.py`：按岗位 ID 和信息完整度合并全部归档，默认写 `data/boss_jobs.csv`。
 - `tools/`：校准与诊断脚本（如 `calibrate_family_classifier.py`），不属于主链路。
 - `data/boss_jobs.csv`：应用默认数据源。上传文件只在当前 Python 进程内临时生效，不等于更新这个 CSV。
+  列定义在 `jobanal/config.py` 的 `OUTPUT_COLUMNS`（末两列是 `job_key` / `job_link`）；
+  改列时**必须同步** `write_csv()`、`store.import_csv()` 与 `app.clean_data()`，
+  否则 `extrasaction="ignore"` 会把新列悄悄丢掉。老 CSV 缺列由 `clean_data()` 补空，向后兼容。
 - `data/jobs.db`：SQLite 库，由 `python cli.py import --archive 抓取结果` 生成，可反复执行（幂等）。
 - `data/crawl_ledger.json`：智能调度状态；重置或改写它会影响后续计划。
 

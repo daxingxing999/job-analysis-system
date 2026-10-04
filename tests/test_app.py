@@ -235,6 +235,8 @@ class AppDataTests(unittest.TestCase):
                 "category": "互联网",
                 "skills": "Python",
                 "description": "",
+                "job_key": f"key-{index:04d}",
+                "job_link": f"https://example.com/job/{index}",
             })
         pd.DataFrame(records).to_csv(self.data_path, index=False, encoding="utf-8-sig")
 
@@ -313,6 +315,39 @@ class AppDataTests(unittest.TestCase):
         self.assertGreater(payload["total"], 0)
         self.assertLess(payload["total"], 30)
         self.assertEqual({item["city"] for item in payload["items"]}, {"杭州"})
+
+    def test_job_detail_by_stable_key(self):
+        """稳定标识比行号可靠：行号每次重新导入都会漂移。"""
+        self._write_paged_csv(3)
+        frame = app.load_data()
+        self.assertIn("job_key", frame.columns)
+        client = app.app.test_client()
+
+        key = frame.loc[0, "job_key"]
+        if not key:
+            self.skipTest("样本 CSV 没有 job_key（此处由 _write_paged_csv 生成，应存在）")
+
+        response = client.get(f"/api/jobs/by-key/{key}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["job_key"], key)
+
+        missing = client.get("/api/jobs/by-key/definitely-not-a-key")
+        self.assertEqual(missing.status_code, 404)
+
+    def test_export_frame_includes_link_and_key_columns(self):
+        self._write_paged_csv(2)
+        with app.app.test_request_context("/export/csv"):
+            frame = app.export_frame()
+        self.assertIn("原始链接", frame.columns)
+        self.assertIn("稳定标识", frame.columns)
+
+    def test_load_data_tolerates_legacy_csv_without_new_columns(self):
+        """老 CSV（没有 job_key/job_link）必须照常工作，新列补空即可。"""
+        self.write_sample_csv()
+        frame = app.load_data()
+        self.assertIn("job_key", frame.columns)
+        self.assertIn("job_link", frame.columns)
+        self.assertTrue((frame["job_key"] == "").all())
 
     def test_empty_csv_returns_an_empty_normalized_frame(self):
         pd.DataFrame(columns=self.sample_rows().columns).to_csv(

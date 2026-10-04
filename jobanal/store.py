@@ -149,6 +149,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 # 简单迁移表：列名 -> 建列语句。老库缺列时自动补，避免用户重建数据库。
 _MIGRATIONS = {
     "postings": {"skills": "ALTER TABLE postings ADD COLUMN skills TEXT"},
+    "jobs": {"job_link": "ALTER TABLE jobs ADD COLUMN job_link TEXT"},
 }
 # 需要移除的冗余列（曾用于存原始 JSON，体积代价过大且归档里已有原文）
 _DROP_COLUMNS = {
@@ -456,7 +457,10 @@ def import_csv(db_path: Path, csv_path: Path) -> ImportStats:
                     stats.quarantine_reasons[reason] += 1
                     continue
                 stats.raw_jobs += 1
-                job_id = str(raw.get("job_id") or "").strip() or f"csv-{index:08d}"
+                # 优先用 CSV 里的稳定标识（job_key）当主键：它是抓取器的 job_id，
+                # 重新导出 CSV 也不会变；没有时才退回 csv-序号。
+                job_id = str(raw.get("job_key") or raw.get("job_id") or "").strip() \
+                    or f"csv-{index:08d}"
                 row = {
                     "job_id": job_id,
                     "title": str(raw.get("job_name") or "").strip(),
@@ -474,7 +478,7 @@ def import_csv(db_path: Path, csv_path: Path) -> ImportStats:
                     "category": str(raw.get("category") or "未知").strip(),
                     "skills": str(raw.get("skills") or "").strip(),
                     "description": str(raw.get("description") or "").strip(),
-                    "job_link": "",
+                    "job_link": str(raw.get("job_link") or "").strip(),
                 }
                 existed = conn.execute(
                     "SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)

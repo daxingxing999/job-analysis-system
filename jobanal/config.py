@@ -58,6 +58,8 @@ def is_derived_archive(path) -> bool:
     return getattr(path, "name", "") in DERIVED_ARCHIVE_FILES
 
 # 输出 CSV 的列顺序（导入链路的事实标准）
+# job_key / job_link 放在末尾：前者是抓取器给的稳定标识（md5 前 16 位，跨批次不变），
+# 后者用于跳回原岗位。旧代码把这两个字段在导入时就丢掉了，导致详情只能靠行号定位。
 OUTPUT_COLUMNS = [
     "job_name",
     "company",
@@ -69,6 +71,8 @@ OUTPUT_COLUMNS = [
     "category",
     "skills",
     "description",
+    "job_key",
+    "job_link",
 ]
 
 # 看板/详情使用的列
@@ -86,6 +90,9 @@ JOB_COLUMNS = [
     "category",
     "skills",
     "description",
+    # 稳定标识与原始链接（旧 CSV 没有这两列时由 clean_data 补空）
+    "job_key",
+    "job_link",
 ]
 
 # 采集时间维度（SQLite 落库后由这些列支撑趋势分析）

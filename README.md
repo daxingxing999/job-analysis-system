@@ -154,6 +154,11 @@ python3 boss_import.py --dry-run                         # 只看统计不写文
 | `category` | company_industry | — |
 | `skills` | skills | `\|` 分隔转逗号分隔；福利/条件描述（「不接受居家办公」「五险一金」）会被剔除，不当作技能 |
 | `description` | 详情 jd | 按 `job_id` 关联，换行压平 |
+| `job_key` | job_id | 抓取器给的稳定标识（md5 前 16 位）。**重新导入 CSV 不会变**，详情页用它定位 |
+| `job_link` | job_link | 原始岗位链接，详情弹窗里可直接跳回 BOSS |
+
+> `job_key` / `job_link` 是后加的两列。老的 CSV（只有前 10 列）依然能用 ——
+> `clean_data()` 会把缺失的列补成空字符串，只是详情页没有原始链接可跳。
 
 > **薪资异常会被隔离而不是静默入库**：月薪低于 1000 或高于 10 万的、上下限跨度
 > 超过 50 倍的、量纲冲突的（同时出现「元/天」和「元/时」）都会带原因写进
@@ -213,9 +218,10 @@ python3 cli.py csv --output data/export.csv      # 从库里导出
 | `/api/dashboard` | 看板全部统计 |
 | `/api/options` | 筛选项 |
 | `/api/jobs-page` | 岗位列表分页/排序（`limit` `offset` `sort` `order`），返回 `total` |
+| `/api/jobs/by-key/<job_key>` | 按**稳定标识**取详情（重新导入后链接依然有效） |
 | `/api/trends` | 采集趋势（技能/城市按天）；未建库时返回 `available: false` |
 | `/api/jobs` | 岗位列表（固定取前 N 条，保留给旧调用方） |
-| `/api/jobs/<job_id>` | 岗位详情 |
+| `/api/jobs/<job_id>` | 岗位详情（按行号，重新导入后会漂移，仅作兼容保留） |
 | `/export/csv` | 按筛选条件导出 CSV |
 | `/export/excel` | 按筛选条件导出 Excel |
 
@@ -269,7 +275,7 @@ python -m pip install -r requirements.txt
 python3 -m unittest discover -s tests -v
 ```
 
-当前共 130 个用例。本机缺少 pandas 时，`test_app.py` 整个模块会以 SkipTest 明示
+当前共 133 个用例。本机缺少 pandas 时，`test_app.py` 整个模块会以 SkipTest 明示
 （其余 112 项照常运行）；装了依赖的环境会全部执行：
 
 | 测试文件 | 用例数 | 覆盖内容 |
@@ -277,8 +283,8 @@ python3 -m unittest discover -s tests -v
 | `tests/test_parsing.py` | 39 | 薪资量纲、异常隔离、字段归一、公司名口径 |
 | `tests/test_smart_crawl.py` | 30 | 调度硬约束、切片累计上限、账本原子写、分类器 |
 | `tests/test_store.py` | 21 | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
+| `tests/test_app.py` | 21 | 看板接口、分页与排序、稳定标识详情、CSV 缓存（需 pandas） |
 | `tests/test_archive.py` | 16 | 归档单遍扫描、收益率、重复分布、字段差异 |
-| `tests/test_app.py` | 18 | 看板接口、分页与排序、CSV 缓存与并发加载（需 pandas） |
 | `tests/test_merge_jobs.py` | 6 | 归档合并与损坏文件的处理 |
 
 ## 十、后续 Agent 工作流

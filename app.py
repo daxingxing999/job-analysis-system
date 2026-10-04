@@ -169,6 +169,9 @@ def clean_data(raw: pd.DataFrame) -> pd.DataFrame:
                 "category": _text(row.get("category")),
                 "skills": _text(row.get("skills"), ""),
                 "description": _text(row.get("description"), ""),
+                # 可选列：只有导入链路生成的 CSV 才有，缺失时留空
+                "job_key": _text(row.get("job_key"), ""),
+                "job_link": _text(row.get("job_link"), ""),
             }
         )
     df = pd.DataFrame(rows)
@@ -181,7 +184,12 @@ def clean_data(raw: pd.DataFrame) -> pd.DataFrame:
     df["salary_high"] = pd.to_numeric(df["salary_high"], errors="coerce")
     df["avg_salary"] = (df["salary_low"] + df["salary_high"]) / 2
     df["experience"] = df["work_years"].map(experience_label)
+    # job_id 是行号，重新导入就会整体漂移（详情链接随之失效）；job_key 是抓取器
+    # 给的稳定标识（md5 前 16 位），有它就优先用它定位。
     df["job_id"] = range(1, len(df) + 1)
+    for column in ("job_key", "job_link"):
+        if column not in df.columns:
+            df[column] = ""
     return df[JOB_COLUMNS]
 
 
@@ -621,6 +629,22 @@ def api_job_detail(job_id: int):
     return jsonify(job_records(match, 1)[0])
 
 
+@app.route("/api/jobs/by-key/<job_key>")
+def api_job_detail_by_key(job_key: str):
+    """按稳定标识（抓取器的 job_id / CSV 里的 job_key）查详情。
+
+    行号式的 /api/jobs/<int> 在每次重新导入后都会漂移，分享出去就失效；
+    这个接口用跨批次稳定的标识定位，是导入链路生成的数据源的首选。
+    """
+    df = load_data()
+    if "job_key" not in df.columns:
+        return jsonify({"error": "当前数据源没有稳定标识字段（job_key）"}), 404
+    match = df[df["job_key"].astype(str) == str(job_key)]
+    if match.empty:
+        return jsonify({"error": "岗位不存在"}), 404
+    return jsonify(job_records(match, 1)[0])
+
+
 @app.route("/api/dashboard")
 def api_dashboard():
     return jsonify(dashboard_payload(apply_filters(load_data(), request.args), _limit(10)))
@@ -670,7 +694,12 @@ def export_frame() -> pd.DataFrame:
     columns = [
         "job_id", "job_name", "company", "city", "salary_low", "salary_high",
         "avg_salary", "education", "experience", "category", "skills", "description",
+        "job_key", "job_link",
     ]
+    # 旧数据源没有 job_key / job_link 列，避免导出时报 KeyError
+    for column in columns:
+        if column not in df.columns:
+            df[column] = ""
     return df[columns].rename(
         columns={
             "job_id": "岗位编号",
@@ -685,6 +714,8 @@ def export_frame() -> pd.DataFrame:
             "category": "行业/类别",
             "skills": "技能",
             "description": "职位描述",
+            "job_key": "稳定标识",
+            "job_link": "原始链接",
         }
     )
 

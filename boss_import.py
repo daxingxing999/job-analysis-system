@@ -180,6 +180,10 @@ def convert_batch(
                 "category": str(job.get("company_industry") or "未知").strip(),
                 "skills": parse_skills(job.get("skills")),
                 "description": clean_description(detail.get("jd")),
+                # 抓取器给的 job_id（md5 前 16 位）跨批次稳定，比行号可靠；
+                # job_link 用于在详情里跳回原岗位，以前在导入这一步被丢掉了。
+                "job_key": str(job.get("job_id") or "").strip(),
+                "job_link": str(job.get("job_link") or "").strip(),
                 "_job_id": str(job.get("job_id") or ""),
             }
         )
