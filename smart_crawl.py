@@ -52,10 +52,12 @@ import heapq
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +69,14 @@ from crawl_and_import import (  # noqa: E402  只读复用，不修改原文件
     SCRAPER_SCRIPT,
     build_env,
 )
+from jobanal.classify import family_of_title_v2  # noqa: E402
+from jobanal.taxonomy import (  # noqa: E402
+    FAMILY_IDS,
+    FAMILY_MATCH_ORDER,
+    FAMILY_MATCH_TERMS,
+    JOB_FAMILIES,
+)
+from jobanal.taxonomy import FAMILY_BY_ID as _TAXONOMY_FAMILY_BY_ID  # noqa: E402
 
 CITY_CODES_FILE = BASE_DIR / "scraper" / "data" / "city_codes.json"
 LEDGER_FILE = BASE_DIR / "data" / "crawl_ledger.json"
@@ -78,79 +88,12 @@ LEDGER_VERSION = 2
 
 
 # ============================================================
-# 一、工种族定义：21 个族，覆盖主流与长尾工种
-#     weight = 该族在全国岗位池里的体量权重，用于「冷城市 × 热工种」配对，
-#              避免拿稀缺请求去撞冷门组合（例如小城市 × 小众职能）。
+# 一、工种族定义
+#     唯一来源：jobanal/taxonomy.py（词表、权重、匹配顺序都在那里）。
+#     以前 JOB_FAMILIES 与 FAMILY_MATCH_TERMS 各写一份、需要手工同步，
+#     结果长出了 "mobile" 幽灵族（词表有、族定义没有）。
 # ============================================================
-JOB_FAMILIES = [
-    # id            名称           代表性搜索关键词（按体量排序，城市间轮转使用）                     体量权重
-    ("backend",    "后端开发",   ["Java", "Python", "Go", "后端开发", "C++"],                  1.30),
-    ("sales",      "销售",       ["销售经理", "销售代表", "大客户销售", "渠道销售"],            1.20),
-    ("ai",         "算法/AI",    ["算法工程师", "机器学习", "深度学习", "大模型算法"],          1.15),
-    ("frontend",   "前端开发",   ["前端开发", "Web前端", "Vue", "React"],                      1.00),
-    ("operation",  "运营",       ["新媒体运营", "用户运营", "电商运营", "内容运营"],            1.00),
-    ("edu",        "教育",       ["教师", "培训讲师", "课程顾问", "幼教"],                      1.00),
-    ("service",    "服务业",     ["客服专员", "餐饮店长", "酒店管理", "房产经纪人"],            1.00),
-    ("mech",       "机械/电气",  ["机械工程师", "电气工程师", "自动化工程师", "工艺工程师"],    0.95),
-    ("product",    "产品",       ["产品经理", "高级产品经理", "硬件产品经理"],                  0.95),
-    ("test",       "测试",       ["测试工程师", "自动化测试", "软件测试"],                      0.85),
-    ("data",       "数据",       ["数据分析师", "数据开发", "大数据工程师", "BI工程师"],        0.85),
-    ("design",     "设计",       ["UI设计师", "视觉设计师", "交互设计师", "平面设计"],          0.85),
-    ("marketing",  "市场",       ["市场营销", "品牌营销", "市场推广", "广告投放"],              0.85),
-    ("finance",    "财务/会计",  ["财务会计", "会计", "出纳", "财务经理"],                      0.85),
-    ("medical",    "医疗健康",   ["护士", "医师", "药师", "医药代表"],                          0.85),
-    ("logistics",  "物流/供应链", ["物流专员", "采购专员", "仓储主管", "供应链管理"],            0.85),
-    ("hr",         "人力/行政",  ["人力资源", "招聘专员", "行政专员", "人事经理"],              0.80),
-    ("ops",        "运维/云",    ["运维工程师", "DevOps", "云计算工程师", "网络工程师"],        0.80),
-    ("construct",  "建筑/土木",  ["施工员", "土建工程师", "结构工程师", "工程造价"],            0.80),
-    ("security",   "安全",       ["网络安全", "信息安全", "安全工程师"],                        0.45),
-]
-
-FAMILY_BY_ID = {fid: {"id": fid, "name": name, "keywords": kws, "weight": weight}
-                for fid, name, kws, weight in JOB_FAMILIES}
-
-
-# 工种族识别词表：只用于「统计已有岗位属于哪个工种」，不参与抓取。
-# 比 JOB_FAMILIES 里的搜索关键词宽得多，因为岗位标题是长尾的（实测 3739 种不同标题）。
-FAMILY_MATCH_TERMS = {
-    "backend":   ["java", "python", "golang", "go开发", "php", "c++", "node", "后端", "服务端",
-                  "开发工程师", "软件开发", "研发工程师", "架构师", "开发"],
-    "frontend":  ["前端", "web开发", "vue", "react", "html", "小程序", "h5", "页面"],
-    "mobile":    ["android", "ios", "移动端", "flutter", "客户端开发", "安卓"],
-    "ai":        ["算法", "机器学习", "深度学习", "大模型", "人工智能", "nlp", "计算机视觉",
-                  "推荐算法", "数据挖掘", "ai工程", "智能"],
-    "test":      ["测试", "qa", "质量保证"],
-    "ops":       ["运维", "devops", "云计算", "系统工程师", "网络工程师", "实施工程师",
-                  "it支持", "sre", "通信", "技术支持"],
-    "data":      ["数据分析", "数据开发", "大数据", "数仓", "bi", "etl", "数据工程", "商业分析"],
-    "security":  ["安全", "渗透", "等保", "风控"],
-    "product":   ["产品经理", "产品专员", "产品助理"],
-    "design":    ["设计师", "美工", "视觉", "ui", "交互", "平面", "设计"],
-    "operation": ["运营"],
-    "marketing": ["市场", "营销", "推广", "策划", "投放", "seo", "sem", "品牌", "公关"],
-    "sales":     ["销售", "业务员", "客户经理", "招商", "电销", "bd", "拓展", "渠道", "顾问式"],
-    "hr":        ["人力", "人事", "招聘", "行政", "hr", "薪酬", "培训专员"],
-    "finance":   ["会计", "财务", "出纳", "审计", "税务", "资金", "结算", "收银", "统计"],
-    "edu":       ["教师", "老师", "讲师", "教研", "教务", "助教", "培训", "课程顾问",
-                  "辅导", "幼教", "教练", "保育"],
-    "medical":   ["护士", "护理", "医师", "医生", "药师", "药店", "医药", "临床", "口腔",
-                  "康复", "检验", "理疗", "兽医"],
-    "mech":      ["机械", "电气", "自动化", "工艺", "模具", "数控", "cnc", "设备工程师",
-                  "结构设计", "机电", "质检员", "普工", "操作工", "技工", "生产", "焊接"],
-    "construct": ["施工", "土建", "结构工程师", "造价", "监理", "测量", "工程管理",
-                  "预算员", "建筑", "安装工程", "暖通", "水电"],
-    "logistics": ["物流", "采购", "仓储", "仓管", "供应链", "跟单", "报关", "货运",
-                  "调度", "配送", "装卸", "库存"],
-    "service":   ["客服", "服务员", "店员", "导购", "前台", "店长", "餐饮", "酒店", "保洁",
-                  "保安", "美容", "房产经纪人", "物业", "快递", "保姆", "月嫂", "司机",
-                  "饮品", "收银员"],
-}
-# 匹配顺序：越靠前越优先。把体量大、特征强的族放前面，避免「医疗器械销售」被误判成医疗。
-FAMILY_MATCH_ORDER = [
-    "backend", "frontend", "mobile", "ai", "data", "test", "ops", "security", "design",
-    "product", "operation", "marketing", "sales", "medical", "edu", "hr", "finance",
-    "mech", "construct", "logistics", "service",
-]
+FAMILY_BY_ID = _TAXONOMY_FAMILY_BY_ID
 
 
 # ============================================================
@@ -275,11 +218,42 @@ def load_ledger() -> dict:
 
 
 def save_ledger(ledger: dict) -> None:
+    """原子写账本。
+
+    tmp 名带 pid：两个进程同时保存时不会互相覆盖对方的临时文件；
+    写完后 fsync 再 replace，掉电也不会留下半截账本。
+    """
     LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
     ledger["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    tmp = LEDGER_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = LEDGER_FILE.with_name(f"{LEDGER_FILE.name}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(ledger, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, LEDGER_FILE)
+
+
+def backup_ledger() -> Path | None:
+    """重置前先备份账本，避免误操作丢掉全部调度历史。"""
+    if not LEDGER_FILE.exists():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup = LEDGER_FILE.with_name(f"{LEDGER_FILE.name}.bak_{stamp}")
+    shutil.copy2(LEDGER_FILE, backup)
+    return backup
+
+
+def _positive_int(name: str, value, *, minimum: int = 1, maximum: int | None = None) -> int:
+    """参数边界校验。
+
+    以前 --combo-min-jobs 0 会让 `covered >= 0` 恒真、把所有组合判为已覆盖，
+    最后打印「任务已收敛」——把配置错误读成了收敛。
+    """
+    if value < minimum:
+        raise SystemExit(f"[错误] {name} 必须 >= {minimum}（当前 {value}）")
+    if maximum is not None and value > maximum:
+        raise SystemExit(f"[错误] {name} 必须 <= {maximum}（当前 {value}）")
+    return value
 
 
 def combo_key(city: str, family_id: str, slice_id: str = "") -> str:
@@ -310,24 +284,11 @@ def family_key(city: str, family_id: str) -> str:
 def family_of_title(title: str) -> str:
     """按岗位标题判断所属工种族，用于统计各工种已覆盖情况。
 
-    实测归档里有 3739 种不同标题，所以词表要宽：
-    先按搜索关键词精确命中，再按 FAMILY_MATCH_TERMS 的宽词表命中，最后才归入 other。
+    实现已迁到 :func:`jobanal.classify.family_of_title_v2`，本函数只做转发：
+    旧实现是「按族顺序做子串匹配」，会把 javascript 判成 java、
+    把「测试开发工程师」判成后端，而分类结果又决定「哪些组合可以跳过」。
     """
-    text = str(title or "")
-    low = text.lower()
-
-    # 一、搜索关键词（精确，优先）
-    for fid, _, keywords, _ in JOB_FAMILIES:
-        for kw in keywords:
-            if kw.lower() in low:
-                return fid
-
-    # 二、宽词表（按 FAMILY_MATCH_ORDER 保证优先级）
-    for fid in FAMILY_MATCH_ORDER:
-        for term in FAMILY_MATCH_TERMS.get(fid, ()):
-            if term in low:
-                return fid
-    return "other"
+    return family_of_title_v2(title)
 
 
 def scan_archive() -> tuple[set[str], Counter, Counter, Counter]:
@@ -404,7 +365,7 @@ class Scheduler:
                  city_family_done, *, total_target, max_families_per_city,
                  zero_bonus, cooldown_city, cooldown_family,
                  max_runs_per_combo=1, combo_min_jobs=8, city_family_covered=None,
-                 nationwide_factor=1.0, max_slices=0):
+                 nationwide_factor=1.0, max_slices=0, max_attempts_per_combo=3):
         self.cities = list(cities)
         self.families = list(families)
         self.ledger = ledger
@@ -421,6 +382,8 @@ class Scheduler:
         self.cooldown_family = cooldown_family
         self.nationwide_factor = nationwide_factor
         self.max_slices = max_slices
+        # 失败组合的最大重试次数：避免一次网络抖动就永久丢掉这个组合
+        self.max_attempts_per_combo = max_attempts_per_combo
 
         # —— 配额分配：按权重把总目标摊到各城市 / 各工种 ——
         # 「全国」不参与城市配额的分母：它不是一座城市，算进去会把真实城市的配额摊薄。
@@ -482,6 +445,12 @@ class Scheduler:
             status = record.get("status")
             if status == "saturated" and slices_done >= self.max_slices:
                 return "历史零新增，已拉黑"
+            if status == "failed":
+                failures = int(record.get("failures", 0))
+                if failures >= self.max_attempts_per_combo:
+                    return f"连续失败 {failures} 次，已放弃"
+                # 失败组合允许重排：以前零结果会被误判成 saturated 而永久拉黑
+                return None
             if status == "done" and int(record.get("runs", 0)) >= self.max_runs_per_combo:
                 # 基础查询已抓过。只有「还想补切片」时才允许再次调度。
                 if slices_done >= self.max_slices:
@@ -710,6 +679,49 @@ def do_import(python: str, output: str) -> int:
     ], timeout=600)
 
 
+@dataclass(frozen=True)
+class QueryOutcome:
+    """一次抓取子进程的结果。
+
+    ``code`` 为 0 只代表「子进程正常退出」，**不代表拿到了数据**：
+    抓取器在一条都没抓到时不写文件、退出码也是 0（``scrape_list`` 里
+    ``if all_jobs: flush_jobs()``，``main()`` 结尾不设退出码）。
+    因此这里把「零结果」「文件缺失」一律归成失败，避免把这种组合
+    误判成 saturated 后永久拉黑。
+    """
+
+    code: int
+    raw: int
+    new_ids: set[str]
+    truncated: bool
+    ok: bool
+
+
+def run_scraper_query(*, python: str, out_file: Path, pages: int, port: int,
+                      keyword: str, city: str, extra_args: list[str],
+                      page_cap: int, baseline: set[str],
+                      scraper: Path | None = None) -> QueryOutcome:
+    """执行一次抓取并给出可判定的结果（模块级，便于单测）。"""
+    script = scraper or SCRAPER_SCRIPT
+    code = run_command([
+        python, str(script),
+        "--keyword", keyword,
+        "--city", city,
+        "--pages", str(pages),
+        "--no-detail",
+        "--format", "json",
+        "--output", str(out_file),
+        "--cdp-port", str(port),
+    ] + list(extra_args))
+
+    if not out_file.exists():
+        return QueryOutcome(code if code != 0 else 1, 0, set(), False, False)
+    file_ids, raw = read_job_ids(out_file)
+    if raw == 0:
+        return QueryOutcome(code if code != 0 else 1, 0, set(), False, False)
+    return QueryOutcome(code, raw, file_ids - baseline, raw >= page_cap, code == 0)
+
+
 # ============================================================
 # 八、账本 / 报告输出
 # ============================================================
@@ -875,6 +887,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="同一座城市最多铺几个工种族")
     parser.add_argument("--max-runs-per-combo", type=int, default=1,
                         help="同一「城市|工种族」组合最多重复抓几次（默认 1，即不重复）")
+    parser.add_argument("--max-attempts-per-combo", type=int, default=3,
+                        help="同一组合因失败（含零结果）最多重试几次，超过才放弃（默认 3）")
     parser.add_argument("--combo-min-jobs", type=int, default=8,
                         help="归档中某「城市|工种族」已有多少条就视为已覆盖、不再抓（默认 8）")
     parser.add_argument("--cities", help="限定城市，逗号分隔（默认全部）")
@@ -908,12 +922,37 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     random.seed(args.seed)
 
+    # ---------- 参数边界校验（先于任何持久化动作） ----------
+    _positive_int("--budget", args.budget, minimum=1)
+    _positive_int("--import-every", args.import_every, minimum=1)
+    _positive_int("--combo-min-jobs", args.combo_min_jobs, minimum=1)
+    _positive_int("--max-runs-per-combo", args.max_runs_per_combo, minimum=1)
+    _positive_int("--max-attempts-per-combo", args.max_attempts_per_combo, minimum=1)
+    _positive_int("--pages", args.pages, minimum=1, maximum=10)
+    if args.delay is not None and args.delay < 0:
+        raise SystemExit(f"[错误] --delay 不能为负（当前 {args.delay}）")
+    if args.max_slices < 0:
+        raise SystemExit(f"[错误] --max-slices 不能为负（当前 {args.max_slices}）")
+
     if args.scraper_script:
         global SCRAPER_SCRIPT
         SCRAPER_SCRIPT = Path(args.scraper_script).resolve()
 
+    # 依赖缺失时早退，不要等跑到一半才 FileNotFoundError
+    if args.run and not SCRAPER_SCRIPT.exists():
+        raise SystemExit(
+            f"[错误] 找不到抓取脚本：{SCRAPER_SCRIPT}\n"
+            "抓取器是本项目的第三方依赖（scraper/scripts/boss_cdp_raw.py），"
+            "请确认仓库完整，或用 --scraper-script 指定路径。"
+        )
+    if not CITY_CODES_FILE.exists():
+        raise SystemExit(f"[错误] 找不到城市码表：{CITY_CODES_FILE}")
+
     # ---------- 重置 ----------
     if args.reset:
+        backup = backup_ledger()
+        if backup:
+            print(f"已备份旧账本 -> {backup}")
         save_ledger(empty_ledger())
         print(f"账本已清空：{LEDGER_FILE}")
         return 0
@@ -995,6 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
         city_family_covered=city_family_counts,   # 归档里已覆盖的城市×族，直接跳过
         nationwide_factor=nationwide_factor,
         max_slices=args.max_slices,
+        max_attempts_per_combo=args.max_attempts_per_combo,
     )
 
     # ---------- 只读类命令 ----------
@@ -1050,8 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
     # ---------- 正式抓取 ----------
     if not picks:
         print("没有待抓取的组合，任务已收敛。")
-        do_import(args.python, args.output)
-        return 0
+        return 0 if do_import(args.python, args.output) == 0 else 1
 
     print("=" * 72)
     print(f"  开始抓取 {len(picks)} 个组合（策略 {args.strategy}，每组合 {args.pages} 页）")
@@ -1077,22 +1116,26 @@ def main(argv: list[str] | None = None) -> int:
 
     page_cap = args.pages * 15          # BOSS 每页 15 条，抓满页数说明查询被上限截断
 
-    def run_one_query(label, out_file, extra_args, keyword, city):
-        """跑一次抓取并返回 (退出码, 原始条数, 新增 job_id 集合, 是否触顶)。"""
-        code = run_command([
-            python, str(SCRAPER_SCRIPT),
-            "--keyword", keyword,
-            "--city", city,
-            "--pages", str(args.pages),
-            "--no-detail",
-            "--format", "json",
-            "--output", str(out_file),
-            "--cdp-port", str(args.cdp_port),
-        ] + extra_args)
-        if not out_file.exists():
-            return code, 0, set(), False
-        file_ids, raw = read_job_ids(out_file)
-        return code, raw, file_ids - known_ids, raw >= page_cap
+    def run_one_query(label, out_file, extra_args, keyword, city,
+                      known_at_start: set[str] | None = None):
+        """跑一次抓取并返回 (退出码, 原始条数, 新增 job_id 集合, 是否触顶)。
+
+        ``known_at_start`` 用于在重跑失败组合时按**当时**的已知集合算差集，
+        避免把上一轮已并入 known_ids 的岗位重复算成「新增」。
+        """
+        baseline = known_ids if known_at_start is None else known_at_start
+        outcome = run_scraper_query(
+            python=python,
+            out_file=out_file,
+            pages=args.pages,
+            port=args.cdp_port,
+            keyword=keyword,
+            city=city,
+            extra_args=extra_args,
+            page_cap=page_cap,
+            baseline=baseline,
+        )
+        return outcome.code, outcome.raw, outcome.new_ids, outcome.truncated
 
     for index, pick in enumerate(picks, 1):
         city, fid = pick["city"], pick["family_id"]
@@ -1118,17 +1161,34 @@ def main(argv: list[str] | None = None) -> int:
             all_new |= new_ids
             base_truncated = truncated
             record = ledger["combos"].get(key, {})
-            record.update({
-                "city": city, "family_id": fid, "family_name": pick["family_name"],
-                "keyword": pick["keyword"], "slice_id": "",
-                "status": "failed" if code != 0 else ("saturated" if not new_ids else "done"),
-                "raw": raw, "new": len(new_ids), "dup": max(0, raw - len(new_ids)),
-                "runs": int(record.get("runs", 0)) + 1,
-                "run_at": datetime.now().isoformat(timespec="seconds"),
-                "exit_code": code,
-            })
-            ledger["combos"][key] = record
-            if code == 0:
+            if code != 0:
+                # 失败只累计失败次数，不动 runs（runs 表示「成功抓过的次数」）
+                failures = int(record.get("failures", 0)) + 1
+                record.update({
+                    "city": city, "family_id": fid, "family_name": pick["family_name"],
+                    "keyword": pick["keyword"], "slice_id": "",
+                    "status": "failed", "failures": failures,
+                    "raw": raw, "new": 0, "dup": 0,
+                    "run_at": datetime.now().isoformat(timespec="seconds"),
+                    "exit_code": code,
+                })
+                ledger["combos"][key] = record
+                consecutive_failures += 1
+                print(f"  ❌ 基础查询失败（exit={code}，raw={raw}，"
+                      f"失败第 {failures} 次）", flush=True)
+            else:
+                status = "done" if new_ids else "saturated"
+                record.update({
+                    "city": city, "family_id": fid, "family_name": pick["family_name"],
+                    "keyword": pick["keyword"], "slice_id": "",
+                    "status": status, "failures": 0,
+                    "raw": raw, "new": len(new_ids), "dup": max(0, raw - len(new_ids)),
+                    "runs": int(record.get("runs", 0)) + 1,
+                    "truncated": truncated,          # 立即落盘，供续跑补切片
+                    "run_at": datetime.now().isoformat(timespec="seconds"),
+                    "exit_code": code,
+                })
+                ledger["combos"][key] = record
                 known_ids |= new_ids
                 consecutive_failures = 0
                 if new_ids:
@@ -1136,9 +1196,8 @@ def main(argv: list[str] | None = None) -> int:
                           f"（重复 {raw - len(new_ids)} 条）", flush=True)
                 else:
                     print(f"  ⚠️ 基础查询 {raw} 条全部是已有岗位 → 标记 saturated", flush=True)
-            else:
-                consecutive_failures += 1
-                print(f"  ❌ 基础查询失败（exit={code}）", flush=True)
+            ledger["combos"][key] = record
+            save_ledger(ledger)
         else:
             # 基础查询已完成过，用最近一次记录里的触顶信息决定是否继续切片
             prev = ledger["combos"].get(key, {})
@@ -1150,33 +1209,52 @@ def main(argv: list[str] | None = None) -> int:
             used = {parse_combo_key(k)[2] for k, v in ledger["combos"].items()
                     if family_key(*parse_combo_key(k)[:2]) == key
                     and parse_combo_key(k)[2] and v.get("status") in ("done", "saturated")}
-            todo = [s for s in slices if s[0] not in used][: args.max_slices]
+            # --max-slices 是「累计上限」，不是「每轮补几个」：
+            # 以前这里写成 [: args.max_slices]，而 _blocked() 又按累计数判断，
+            # 结果传 2 就永远只能补 2 个切片，剩下 4 个再也拿不到。
+            remaining = max(0, args.max_slices - len(used))
+            todo = [s for s in slices if s[0] not in used][:remaining]
             if todo:
                 print(f"  ↳ 查询触顶（{page_cap} 条），继续补 {len(todo)} 个"
-                      f"{'经验' if args.slice_strategy == 'experience' else '学历'}切片", flush=True)
+                      f"{'经验' if args.slice_strategy == 'experience' else '学历'}切片"
+                      f"（已补 {len(used)}/{args.max_slices}）", flush=True)
             for sid, label, extra in todo:
                 slice_key = combo_key(city, fid, sid)
                 out_file = archive_path_for(batch_dir, city, f"{fid}_{sid}")
                 print(f"    · 切片【{label}】", flush=True)
+                # 切片用「进入本切片前」的已知集合算差集，避免同一轮里重复计数
                 code, raw, new_ids, _ = run_one_query(
-                    label, out_file, extra, pick["keyword"], city)
+                    label, out_file, extra, pick["keyword"], city,
+                    known_at_start=set(known_ids))
                 if code != 0:
                     consecutive_failures += 1
                 else:
                     consecutive_failures = 0
                 total_raw += raw
                 all_new |= new_ids
-                known_ids |= new_ids
                 srec = ledger["combos"].get(slice_key, {})
-                srec.update({
-                    "city": city, "family_id": fid, "family_name": pick["family_name"],
-                    "keyword": pick["keyword"], "slice_id": sid, "slice_label": label,
-                    "status": "failed" if code != 0 else ("saturated" if not new_ids else "done"),
-                    "raw": raw, "new": len(new_ids), "dup": max(0, raw - len(new_ids)),
-                    "runs": int(srec.get("runs", 0)) + 1,
-                    "run_at": datetime.now().isoformat(timespec="seconds"),
-                    "exit_code": code,
-                })
+                if code != 0:
+                    failures = int(srec.get("failures", 0)) + 1
+                    srec.update({
+                        "city": city, "family_id": fid, "family_name": pick["family_name"],
+                        "keyword": pick["keyword"], "slice_id": sid, "slice_label": label,
+                        "status": "failed", "failures": failures,
+                        "raw": raw, "new": 0, "dup": 0,
+                        "run_at": datetime.now().isoformat(timespec="seconds"),
+                        "exit_code": code,
+                    })
+                else:
+                    # 只有成功时才并入已知集合：失败留下的半截结果不能当作已覆盖
+                    known_ids |= new_ids
+                    srec.update({
+                        "city": city, "family_id": fid, "family_name": pick["family_name"],
+                        "keyword": pick["keyword"], "slice_id": sid, "slice_label": label,
+                        "status": "done" if new_ids else "saturated", "failures": 0,
+                        "raw": raw, "new": len(new_ids), "dup": max(0, raw - len(new_ids)),
+                        "runs": int(srec.get("runs", 0)) + 1,
+                        "run_at": datetime.now().isoformat(timespec="seconds"),
+                        "exit_code": code,
+                    })
                 ledger["combos"][slice_key] = srec
                 save_ledger(ledger)
                 print(f"      {'✅' if new_ids else '⚠️'} {raw} 条，新增 {len(new_ids)} 条",
@@ -1184,12 +1262,6 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(random.uniform(10, 20))
                 if consecutive_failures >= 3:
                     break
-
-        # 把「基础查询是否触顶」记下来，下次续跑切片时用
-        base_rec = ledger["combos"].get(key)
-        if base_rec is not None and not skip_base:
-            base_rec["truncated"] = base_truncated
-            save_ledger(ledger)
 
         if total_raw:
             print(f"  ▸ 本组合合计 {total_raw} 条，新增不重复岗位 {len(all_new)} 条", flush=True)
@@ -1200,7 +1272,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if index % args.import_every == 0:
             print("\n--- 阶段性导入 ---")
-            do_import(python, args.output)
+            if do_import(python, args.output) != 0:
+                print("[错误] 阶段性导入失败：归档已更新但 CSV 未同步，"
+                      "可稍后单独执行 boss_import.py 重试。", file=sys.stderr)
 
         if consecutive_failures >= 3:
             print("\n连续失败 3 次，可能是风控或登录态失效，提前停止本次任务。")
@@ -1223,7 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
     save_ledger(ledger)
 
     print("\n--- 最终导入 ---")
-    do_import(python, args.output)
+    import_code = do_import(python, args.output)
 
     elapsed = (time.time() - started) / 60
     total_new = sum(r.get("new", 0) for r in combo_records)
@@ -1236,6 +1310,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  数据文件：{args.output}")
     print(f"  覆盖率报告：py smart_crawl.py --report")
     print("=" * 72)
+    if import_code != 0:
+        print(f"[错误] 最终导入失败（exit={import_code}）："
+              f"{args.output} 可能不是最新。请单独执行 boss_import.py 重试。",
+              file=sys.stderr)
+        return 1
     return 0
 
 
