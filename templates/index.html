@@ -182,6 +182,29 @@
       <section class="table-card">
         <div class="chart-header">
           <h3>岗位招聘概览</h3>
+          <div class="table-tools">
+            <label>
+              <span>排序</span>
+              <select id="sortSelect">
+                <option value="salary:desc">平均薪资（高→低）</option>
+                <option value="salary:asc">平均薪资（低→高）</option>
+                <option value="salary_low:desc">薪资下限（高→低）</option>
+                <option value="salary_high:desc">薪资上限（高→低）</option>
+                <option value="city:asc">城市（A→Z）</option>
+                <option value="company:asc">公司（A→Z）</option>
+                <option value="job_name:asc">岗位名称（A→Z）</option>
+              </select>
+            </label>
+            <label>
+              <span>每页</span>
+              <select id="pageSizeSelect">
+                <option value="20">20 条</option>
+                <option value="50">50 条</option>
+                <option value="100">100 条</option>
+              </select>
+            </label>
+            <span id="tableHint" class="chart-hint"></span>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
@@ -200,6 +223,11 @@
             </thead>
             <tbody id="jobTableBody"></tbody>
           </table>
+        </div>
+        <div class="pager">
+          <button id="prevPageBtn" class="secondary" type="button">上一页</button>
+          <span id="pageInfo">第 1 页</span>
+          <button id="nextPageBtn" class="secondary" type="button">下一页</button>
         </div>
       </section>
     </div>

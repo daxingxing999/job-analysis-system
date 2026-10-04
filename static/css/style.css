@@ -457,3 +457,43 @@ tbody tr:hover {
 .chart-card[hidden] {
   display: none;
 }
+
+/* 表格工具条与翻页控件 */
+.table-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #526579;
+}
+
+.table-tools label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-tools select {
+  padding: 5px 8px;
+  border: 1px solid #d5dde6;
+  border-radius: 6px;
+  background: #fff;
+  color: #243447;
+  font-size: 13px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 0 4px;
+  color: #526579;
+  font-size: 13px;
+}
+
+.pager button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

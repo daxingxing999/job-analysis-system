@@ -392,6 +392,41 @@ def _limit(default: int = 10, maximum: int = 100) -> int:
     return max(1, min(value, maximum))
 
 
+def _offset() -> int:
+    try:
+        value = int(request.args.get("offset", 0))
+    except (TypeError, ValueError):
+        value = 0
+    return max(0, value)
+
+
+# 允许的排序字段 -> 实际列名。白名单，避免把请求参数拼进排序表达式。
+SORT_COLUMNS = {
+    "salary": "avg_salary",
+    "salary_low": "salary_low",
+    "salary_high": "salary_high",
+    "city": "city",
+    "company": "company",
+    "job_name": "job_name",
+    "education": "education",
+    "experience": "experience",
+    "category": "category",
+}
+
+
+def sort_jobs(df: pd.DataFrame) -> pd.DataFrame:
+    """按 sort/order 参数排序（白名单字段，非法值退回按平均薪资降序）。"""
+    field = str(request.args.get("sort", "") or "").strip()
+    order = str(request.args.get("order", "desc") or "desc").strip().lower()
+    column = SORT_COLUMNS.get(field, "avg_salary")
+    if column not in df.columns:
+        column = "avg_salary"
+    ascending = order == "asc"
+    if df.empty:
+        return df
+    return df.sort_values(by=column, ascending=ascending, kind="mergesort").reset_index(drop=True)
+
+
 def salary_distribution(df: pd.DataFrame) -> list[dict]:
     if df.empty:
         return [{"name": label, "value": 0} for label in SALARY_LABELS]
@@ -404,6 +439,17 @@ def job_records(df: pd.DataFrame, limit: int) -> list[dict]:
     if df.empty:
         return []
     result = df.head(limit).copy()
+    result = result.where(pd.notna(result), None)
+    return result.to_dict(orient="records")
+
+
+def job_page(df: pd.DataFrame, offset: int, limit: int) -> list[dict]:
+    """按 offset/limit 切片并转成可 JSON 化的记录。"""
+    if df.empty:
+        return []
+    result = df.iloc[offset:offset + limit].copy()
+    if result.empty:
+        return []
     result = result.where(pd.notna(result), None)
     return result.to_dict(orient="records")
 
@@ -544,6 +590,26 @@ def api_top_companies():
 @app.route("/api/jobs")
 def api_jobs():
     return jsonify(job_records(apply_filters(load_data(), request.args), _limit(12)))
+
+
+@app.route("/api/jobs-page")
+def api_jobs_page():
+    """分页 + 排序的岗位列表，供看板表格使用。
+
+    原先表格固定只取前 10 条，8000+ 条数据实际看不到第 11 条以后。
+    返回 total 以便前端渲染页码；字段保持与 /api/jobs 一致。
+    """
+    filtered = sort_jobs(apply_filters(load_data(), request.args))
+    offset = _offset()
+    limit = _limit(default=20, maximum=200)
+    return jsonify({
+        "items": job_page(filtered, offset, limit),
+        "total": int(len(filtered)),
+        "offset": offset,
+        "limit": limit,
+        "sort": str(request.args.get("sort", "") or "salary"),
+        "order": str(request.args.get("order", "") or "desc"),
+    })
 
 
 @app.route("/api/jobs/<int:job_id>")

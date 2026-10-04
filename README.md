@@ -193,6 +193,9 @@ python3 cli.py csv --output data/export.csv      # 从库里导出
 - **统计看板**：岗位总量、平均薪资、薪资/学历/经验/城市/行业/企业分布、技能与关键词
 - **采集趋势**：技能需求与城市岗位量随采集日的变化（需先落库，见第三之二节）
 - **数据质量核对**：`cli.py verify` 报告 JD 覆盖率、匿名公司占比、重复抓到次数等
+- **采集收益分析**：`tools/archive_report.py` 单遍扫描归档，给出各城市/关键词的
+  收益率、重复快照的字段差异、数据缺口（替代原先三个各扫一遍的脚本）
+- **岗位浏览**：表格支持排序（薪资/城市/公司/岗位名）与分页，每页 20/50/100 条
 - **岗位详情**：点击列表查看完整字段与职位描述
 - **数据导入**：页面上传 CSV/Excel，或命令行转换抓取结果、导入 SQLite
 - **结果导出**：按当前筛选条件导出 CSV / Excel
@@ -209,10 +212,16 @@ python3 cli.py csv --output data/export.csv      # 从库里导出
 | --- | --- |
 | `/api/dashboard` | 看板全部统计 |
 | `/api/options` | 筛选项 |
+| `/api/jobs-page` | 岗位列表分页/排序（`limit` `offset` `sort` `order`），返回 `total` |
 | `/api/trends` | 采集趋势（技能/城市按天）；未建库时返回 `available: false` |
+| `/api/jobs` | 岗位列表（固定取前 N 条，保留给旧调用方） |
 | `/api/jobs/<job_id>` | 岗位详情 |
 | `/export/csv` | 按筛选条件导出 CSV |
 | `/export/excel` | 按筛选条件导出 Excel |
+
+排序字段走白名单（`salary` / `salary_low` / `salary_high` / `city` / `company` /
+`job_name` / `education` / `experience` / `category`），非法值安全回退，
+`limit` 限制在 1~200。
 
 ## 六、排错
 
@@ -245,8 +254,9 @@ python -m pip install -r requirements.txt
 ## 八、变更记录
 
 - 本轮改造（分支 `feature/review-hardening`）：新增 `jobanal/` 核心包与 SQLite
-  数据层、薪资量纲校验与异常隔离、采集趋势图、统一 CLI（`cli.py`），修复智能调度
-  的零结果永久拉黑与切片补不满，本地化 ECharts，补齐 CI 与 LICENSE。
+  数据层、薪资量纲校验与异常隔离、采集趋势图、统一 CLI（`cli.py`）、
+  分析脚本归并为单遍扫描、岗位表分页/排序，修复智能调度的零结果永久拉黑与
+  切片补不满，本地化 ECharts，补齐 CI 与 LICENSE。
   详见 [`docs/代码评审报告.md`](./docs/代码评审报告.md)。
 - [2026-09-29 项目变更说明](./docs/变更说明_2026-09-29.md)：移除示例数据回退并补齐抓取依赖。
 - [2026-09-28 项目变更说明](./docs/变更说明_2026-09-28.md)：岗位数据合并、macOS 启动脚本及 Python 字节码说明。
@@ -259,15 +269,17 @@ python -m pip install -r requirements.txt
 python3 -m unittest discover -s tests -v
 ```
 
-当前共 97 个用例（其中 1 个需要 pandas，缺失时会以 SkipTest 明示）：
+当前共 130 个用例。本机缺少 pandas 时，`test_app.py` 整个模块会以 SkipTest 明示
+（其余 112 项照常运行）；装了依赖的环境会全部执行：
 
-| 测试文件 | 覆盖内容 |
-| --- | --- |
-| `tests/test_parsing.py` | 薪资量纲、异常隔离、字段归一、公司名口径 |
-| `tests/test_smart_crawl.py` | 调度硬约束、切片累计上限、账本原子写、分类器 |
-| `tests/test_store.py` | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
-| `tests/test_app.py` | 看板接口、CSV 缓存与并发加载（需 pandas） |
-| `tests/test_merge_jobs.py` | 归档合并与损坏文件的处理 |
+| 测试文件 | 用例数 | 覆盖内容 |
+| --- | --- | --- |
+| `tests/test_parsing.py` | 39 | 薪资量纲、异常隔离、字段归一、公司名口径 |
+| `tests/test_smart_crawl.py` | 30 | 调度硬约束、切片累计上限、账本原子写、分类器 |
+| `tests/test_store.py` | 21 | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
+| `tests/test_archive.py` | 16 | 归档单遍扫描、收益率、重复分布、字段差异 |
+| `tests/test_app.py` | 18 | 看板接口、分页与排序、CSV 缓存与并发加载（需 pandas） |
+| `tests/test_merge_jobs.py` | 6 | 归档合并与损坏文件的处理 |
 
 ## 十、后续 Agent 工作流
 

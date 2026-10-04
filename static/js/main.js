@@ -18,7 +18,16 @@ const uploadDataBtn = document.getElementById('uploadDataBtn');
 const resetDataBtn = document.getElementById('resetDataBtn');
 const detailDialog = document.getElementById('detailDialog');
 const detailContent = document.getElementById('detailContent');
+const sortSelect = document.getElementById('sortSelect');
+const pageSizeSelect = document.getElementById('pageSizeSelect');
+const tableHint = document.getElementById('tableHint');
+const pageInfo = document.getElementById('pageInfo');
+const prevPageBtn = document.getElementById('prevPageBtn');
+const nextPageBtn = document.getElementById('nextPageBtn');
 const charts = new Map();
+
+// 岗位表格的分页/排序状态
+const tableState = { page: 0, pageSize: 20, sort: 'salary', order: 'desc', total: 0 };
 
 function formatYuan(value) {
   return `¥${Number(value || 0).toLocaleString()}元`;
@@ -103,6 +112,17 @@ function buildQueryString() {
     });
   if (keywordInput.value.trim()) params.set('keyword', keywordInput.value.trim());
   params.set('limit', '10');
+  return `?${params.toString()}`;
+}
+
+/** 表格专用查询：带排序与分页（看板统计仍用 buildQueryString）。 */
+function buildTableQueryString() {
+  const params = new URLSearchParams(buildQueryString());
+  params.delete('limit');
+  if (tableState.sort) params.set('sort', tableState.sort);
+  if (tableState.order) params.set('order', tableState.order);
+  params.set('limit', String(tableState.pageSize));
+  params.set('offset', String(tableState.page * tableState.pageSize));
   return `?${params.toString()}`;
 }
 
@@ -211,6 +231,31 @@ function renderLineChart(id, dates, series) {
   }, true);
 }
 
+/** 加载岗位表格当前页（分页 + 排序），并更新翻页控件。 */
+async function loadJobs() {
+  try {
+    const data = await fetchJson(`/api/jobs-page${buildTableQueryString()}`);
+    tableState.total = data.total || 0;
+    renderJobTable(data.items);
+    const pages = Math.max(1, Math.ceil(tableState.total / tableState.pageSize));
+    tableState.page = Math.min(tableState.page, pages - 1);
+    const from = tableState.total ? tableState.page * tableState.pageSize + 1 : 0;
+    const to = Math.min(tableState.total, (tableState.page + 1) * tableState.pageSize);
+    if (pageInfo) pageInfo.textContent = `第 ${tableState.page + 1} / ${pages} 页`;
+    if (tableHint) tableHint.textContent = tableState.total ? `显示第 ${from}-${to} 条，共 ${tableState.total} 条` : '没有符合条件的岗位';
+    if (prevPageBtn) prevPageBtn.disabled = tableState.page <= 0;
+    if (nextPageBtn) nextPageBtn.disabled = tableState.page >= pages - 1;
+  } catch (error) {
+    resultHint.textContent = error.message;
+  }
+}
+
+/** 筛选条件变化时回到第一页，否则会停在越界的页码上。 */
+function reloadJobsFromFirstPage() {
+  tableState.page = 0;
+  return loadJobs();
+}
+
 function renderJobTable(data) {
   const tbody = document.getElementById('jobTableBody');
   tbody.replaceChildren();
@@ -252,8 +297,7 @@ function renderJobTable(data) {
   });
 }
 
-async function showDetail(jobId) {
-  try {
+async function showDetail(jobId) {  try {
     const item = await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`);
     document.getElementById('detailTitle').textContent = item.job_name || '岗位详情';
     detailContent.replaceChildren();
@@ -294,7 +338,7 @@ async function loadDashboard() {
     renderBarChart('categoryChart', data.category, true, '#718096');
     renderBarChart('skillChart', data.skills, true, '#b7791f');
     renderBarChart('keywordChart', data.keywords, true, '#5b7794');
-    renderJobTable(data.jobs);
+    // 表格改由 loadJobs() 单独取数（支持分页/排序），这里不再用看板里的前 10 条
     updateExportLinks();
   } catch (error) {
     resultHint.textContent = error.message;
@@ -329,14 +373,41 @@ async function loadTrends() {
   }
 }
 
-applyFilterBtn.addEventListener('click', loadDashboard);
+applyFilterBtn.addEventListener('click', () => {
+  loadDashboard();
+  reloadJobsFromFirstPage();
+});
 keywordInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') loadDashboard();
+  if (event.key === 'Enter') {
+    loadDashboard();
+    reloadJobsFromFirstPage();
+  }
 });
 resetFilterBtn.addEventListener('click', () => {
   [cityFilter, educationFilter, experienceFilter, categoryFilter].forEach((control) => { control.value = ''; });
   keywordInput.value = '';
   loadDashboard();
+  reloadJobsFromFirstPage();
+});
+sortSelect?.addEventListener('change', () => {
+  const [sort, order] = sortSelect.value.split(':');
+  tableState.sort = sort;
+  tableState.order = order;
+  reloadJobsFromFirstPage();
+});
+pageSizeSelect?.addEventListener('change', () => {
+  tableState.pageSize = Number(pageSizeSelect.value) || 20;
+  reloadJobsFromFirstPage();
+});
+prevPageBtn?.addEventListener('click', () => {
+  if (tableState.page > 0) {
+    tableState.page -= 1;
+    loadJobs();
+  }
+});
+nextPageBtn?.addEventListener('click', () => {
+  tableState.page += 1;
+  loadJobs();
 });
 document.getElementById('closeDetailBtn').addEventListener('click', () => detailDialog.close());
 uploadDataBtn.addEventListener('click', uploadData);
@@ -362,6 +433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadFilterOptions();
     await loadDashboard();
     await loadTrends();
+    await loadJobs();
   } catch (error) {
     resultHint.textContent = error.message;
   }
