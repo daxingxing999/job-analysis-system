@@ -172,62 +172,155 @@ function safeChartName(value) {
   }[char]));
 }
 
-function renderBarChart(id, data, horizontal = false, color = '#4cc9f0') {
+// 多序列图表的配色（趋势线、饼图共用）
+const PALETTE = ['#3d6f9f', '#b7791f', '#2f855a', '#9b2c2c', '#6b46c1',
+  '#2c7a7b', '#718096', '#b83280', '#4a5568', '#dd6b20'];
+
+/** 岗位个数用「1,234」这种带千分位的写法，避免大数字难读。 */
+function formatCount(value) {
+  return Number(value || 0).toLocaleString('zh-CN');
+}
+
+/**
+ * 柱状图。改动点：横向柱条上直接标数值、tooltip 带千分位与占比。
+ */
+function renderBarChart(id, data, horizontal = false, color = PALETTE[0]) {
   const chart = chartFor(id);
-  const names = (data || []).map((item) => safeChartName(item.name));
-  const values = (data || []).map((item) => item.value);
+  const items = data || [];
+  const names = items.map((item) => safeChartName(item.name));
+  const values = items.map((item) => Number(item.value) || 0);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const share = (value) => (total ? `（占 ${(value / total * 100).toFixed(1)}%）` : '');
+
   chart.setOption({
     animation: false,
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: horizontal ? 70 : 45, right: 25, top: 20, bottom: 45, containLabel: true },
-    xAxis: horizontal ? { type: 'value', axisLabel: { color: '#526579' } }
-      : { type: 'category', data: names, axisLabel: { color: '#526579', rotate: names.length > 7 ? 25 : 0 } },
-    yAxis: horizontal ? { type: 'category', data: names, axisLabel: { color: '#526579' } }
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const list = Array.isArray(params) ? params : [params];
+        return list.map((item) => {
+          const value = Number(item.value) || 0;
+          return `${safeChartName(item.name)}：${formatCount(value)} 个岗位${share(value)}`;
+        }).join('<br/>');
+      },
+    },
+    grid: { left: horizontal ? 70 : 45, right: 45, top: 20, bottom: 45, containLabel: true },
+    xAxis: horizontal
+      ? { type: 'value', axisLabel: { color: '#526579' } }
+      : { type: 'category', data: names,
+          axisLabel: { color: '#526579', rotate: names.length > 7 ? 25 : 0 } },
+    yAxis: horizontal
+      ? { type: 'category', data: names, axisLabel: { color: '#526579' } }
       : { type: 'value', axisLabel: { color: '#526579' } },
-    series: [{ type: 'bar', data: values, barMaxWidth: 26, itemStyle: { color, borderRadius: 5 } }],
+    series: [{
+      type: 'bar',
+      data: values,
+      barMaxWidth: 26,
+      itemStyle: { color, borderRadius: 5 },
+      label: {
+        show: true,
+        position: horizontal ? 'right' : 'top',
+        color: '#526579',
+        fontSize: 11,
+        formatter: (params) => formatCount(params.value),
+      },
+    }],
   }, true);
 }
 
+/**
+ * 饼图。改动点：标签直接显示「名称 数量（占比）」，比只给名称好读。
+ */
 function renderPieChart(id, data) {
   const chart = chartFor(id);
-  const safeData = (data || []).map((item) => ({
+  const items = data || [];
+  const safeData = items.map((item, index) => ({
     name: safeChartName(item.name),
     value: Number(item.value) || 0,
+    itemStyle: { color: PALETTE[index % PALETTE.length] },
   }));
   chart.setOption({
     animation: false,
-    tooltip: { trigger: 'item' },
+    color: PALETTE,
+    tooltip: {
+      trigger: 'item',
+      formatter: (params) => `${params.name}：${formatCount(params.value)} 个岗位`
+        + `（${params.percent}%）`,
+    },
     legend: { bottom: 0, textStyle: { color: '#526579' } },
-    series: [{ type: 'pie', radius: ['42%', '72%'], center: ['50%', '42%'],
-      data: safeData, label: { color: '#243447' } }],
+    series: [{
+      type: 'pie',
+      radius: ['42%', '72%'],
+      center: ['50%', '42%'],
+      data: safeData,
+      label: {
+        color: '#243447',
+        formatter: (params) => `${params.name}\n${formatCount(params.value)}（${params.percent}%）`,
+      },
+      labelLine: { lineStyle: { color: '#c3cdd8' } },
+    }],
   }, true);
 }
 
 /**
  * 采集趋势折线图（多序列）。数据来自 /api/trends，即 SQLite 的 postings 表。
  * 数据库不存在时由调用方给出提示并隐藏卡片，不在这里报错。
+ * totals 是「当日抓到的岗位总数」，作为参考线一起画，避免只看到相对高低。
  */
-function renderLineChart(id, dates, series) {
+function renderLineChart(id, dates, series, totals) {
   const chart = chartFor(id);
+  const labels = (dates || []).map((day) => String(day).slice(5));
+  const lines = (series || []).map((item, index) => ({
+    name: safeChartName(item.name),
+    type: 'line',
+    smooth: true,
+    showSymbol: true,
+    symbolSize: 6,
+    lineStyle: { width: 2, color: PALETTE[index % PALETTE.length] },
+    itemStyle: { color: PALETTE[index % PALETTE.length] },
+    data: (item.data || []).map((value) => Number(value) || 0),
+  }));
+  if (Array.isArray(totals) && totals.length) {
+    lines.push({
+      name: '当日岗位总数',
+      type: 'line',
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { width: 1.5, type: 'dashed', color: '#a0aec0' },
+      itemStyle: { color: '#a0aec0' },
+      data: totals.map((value) => Number(value) || 0),
+    });
+  }
+
   chart.setOption({
     animation: false,
-    tooltip: { trigger: 'axis' },
+    color: PALETTE,
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const list = Array.isArray(params) ? params : [params];
+        const head = list.length ? `${list[0].axisValue}` : '';
+        return [head, ...list.map((item) =>
+          `${item.marker}${item.seriesName}：${formatCount(item.value)} 条`)].join('<br/>');
+      },
+    },
     legend: { top: 0, textStyle: { color: '#526579' } },
     grid: { left: 55, right: 25, top: 45, bottom: 40, containLabel: true },
     xAxis: {
       type: 'category',
       boundaryGap: false,
-      data: (dates || []).map((day) => String(day).slice(5)),
+      data: labels,
       axisLabel: { color: '#526579' },
     },
-    yAxis: { type: 'value', axisLabel: { color: '#526579' } },
-    series: (series || []).map((item) => ({
-      name: safeChartName(item.name),
-      type: 'line',
-      smooth: true,
-      showSymbol: true,
-      data: (item.data || []).map((value) => Number(value) || 0),
-    })),
+    yAxis: {
+      type: 'value',
+      name: '条数',
+      nameTextStyle: { color: '#93a1b0', fontSize: 11 },
+      axisLabel: { color: '#526579' },
+      splitLine: { lineStyle: { color: '#eef2f6' } },
+    },
+    series: lines,
   }, true);
 }
 
@@ -352,13 +445,13 @@ async function loadDashboard() {
     summaryKeys.topSkill.textContent = summary.top_skill || '无';
     resultHint.textContent = `共 ${summary.total_jobs || 0} 条岗位记录 · 文本分析：${summary.text_analyzer || '规则分词降级'}`;
     renderCompanyList(data.top_companies);
-    renderBarChart('salaryChart', data.salary, false, '#3d6f9f');
+    renderBarChart('salaryChart', data.salary, false);
     renderPieChart('educationChart', data.education);
-    renderBarChart('cityChart', data.city, true, '#4f7d9f');
-    renderBarChart('experienceChart', data.experience, false, '#6b7280');
-    renderBarChart('categoryChart', data.category, true, '#718096');
-    renderBarChart('skillChart', data.skills, true, '#b7791f');
-    renderBarChart('keywordChart', data.keywords, true, '#5b7794');
+    renderBarChart('cityChart', data.city, true);
+    renderBarChart('experienceChart', data.experience, false);
+    renderBarChart('categoryChart', data.category, true);
+    renderBarChart('skillChart', data.skills, true);
+    renderBarChart('keywordChart', data.keywords, true);
     // 表格改由 loadJobs() 单独取数（支持分页/排序），这里不再用看板里的前 10 条
     updateExportLinks();
   } catch (error) {
@@ -387,28 +480,49 @@ async function loadTrends() {
     if (hint) {
       hint.textContent = `${span} · 共 ${totals} 条快照 · 数据库 ${data.coverage?.jobs || 0} 个岗位`;
     }
-    renderLineChart('trendChart', data.dates, data.skills);
+    renderLineChart('trendChart', data.dates, data.skills, data.totals);
   } catch (error) {
     if (card) card.hidden = true;
     if (hint) hint.textContent = `趋势不可用：${error.message}`;
   }
 }
 
-applyFilterBtn.addEventListener('click', () => {
+function refreshAll() {
   loadDashboard();
   reloadJobsFromFirstPage();
-});
+}
+
+/** 输入防抖：搜索框边打字边搜，但不至于每个字符都打一次接口。 */
+function debounce(fn, wait = 320) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, wait);
+  };
+}
+
+const refreshAllDebounced = debounce(refreshAll);
+
+applyFilterBtn.addEventListener('click', refreshAll);
+keywordInput.addEventListener('input', refreshAllDebounced);
 keywordInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    loadDashboard();
-    reloadJobsFromFirstPage();
+  if (event.key === 'Enter') refreshAll();
+  if (event.key === 'Escape') {
+    keywordInput.value = '';
+    refreshAll();
   }
 });
 resetFilterBtn.addEventListener('click', () => {
   [cityFilter, educationFilter, experienceFilter, categoryFilter].forEach((control) => { control.value = ''; });
   keywordInput.value = '';
-  loadDashboard();
-  reloadJobsFromFirstPage();
+  refreshAll();
+});
+// 下拉筛选即时生效，不需要再点一次「筛选」
+[cityFilter, educationFilter, experienceFilter, categoryFilter].forEach((control) => {
+  control?.addEventListener('change', refreshAll);
 });
 sortSelect?.addEventListener('change', () => {
   const [sort, order] = sortSelect.value.split(':');

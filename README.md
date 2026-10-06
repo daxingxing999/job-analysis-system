@@ -43,6 +43,31 @@ job-analysis-system/
 
 ## 一、跑起来看效果
 
+### 环境要求（先看这一段，能省掉大部分折腾）
+
+- **Python 3.11 或 3.12**（推荐）。3.10 也能跑；**3.13+ 装 pandas 可能失败**（见下方排错）。
+- 两个启动脚本都会自动探测解释器：优先项目内 `.venv`，其次 `py` / `python` / 常见安装路径。
+  找不到解释器或依赖缺失时会直接告诉你该执行哪条命令，而不是抛一堆堆栈。
+- 启动后**会先做健康检查，确认端口已经监听才打开浏览器**，不会出现「无法访问」需要手动刷新。
+
+首次安装依赖（三选一）：
+
+```bash
+# 1) 最省事：跟着范围走，pip 会挑与当前 Python 匹配的版本
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+
+# 2) 要完全复现（写论文记录环境时用这个）
+.venv/bin/python -m pip install -r requirements.txt -c constraints.txt
+
+# 3) 还要跑测试 / 覆盖率
+.venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+`requirements.txt` 用的是**版本范围**而不是全量钉死：原先 `Flask==3.0.3`、
+`pandas==2.2.3` 这种写法在 Python 3.13/3.14 上没有对应 wheel，pip 会转去源码编译
+然后失败。要精确复现就叠加 `constraints.txt`。
+
 ### macOS
 
 双击项目目录中的 `启动系统.command` 即可启动；也可以在终端运行：
@@ -53,24 +78,24 @@ chmod +x "启动系统.command"  # 首次需要执行一次
 ./启动系统.command
 ```
 
-脚本会优先使用项目内的 `.venv`，并自动打开系统页面。默认端口为 5000；
-如果被 macOS 系统服务占用，会自动选择下一个空闲端口。
-如果提示缺少依赖，在项目目录执行：
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
+脚本会优先使用项目内的 `.venv`，并在健康检查通过后自动打开页面。默认端口为 5000；
+如果被占用会自动选择下一个空闲端口（也可用 `PORT=5001 ./启动系统.command` 指定）。
 
 服务运行期间请保持终端窗口打开；关闭窗口即可停止服务。
 
 ### Windows
 
-```bash
-cd C:\Users\Administrator\Desktop\作业\job-analysis-system
+双击 `启动系统.bat`，或在命令行执行：
+
+```bat
+cd /d C:\你的路径\job-analysis-system
 py -m pip install -r requirements.txt
-py app.py
+启动系统.bat
 ```
+
+> 旧版本的 `启动系统.bat` 里硬编码了某台机器的解释器路径
+> （`C:\Users\Administrator\.workbuddy\...`），换台机器必然启动失败，现已改为自动探测。
+> 端口同样可用 `set PORT=5001` 覆盖。
 
 浏览器打开 <http://127.0.0.1:5000/>。
 
@@ -78,19 +103,14 @@ py app.py
 如果默认文件缺失，启动时会明确报错，提示先导入抓取归档或指定有效 CSV。
 如需使用其它已有的标准岗位 CSV，可设置 `ZOUYE_DATA_FILE`：
 
+```bash
+ZOUYE_DATA_FILE=/path/to/other_jobs.csv python3 app.py     # macOS / Linux
+```
+
 ```bat
 set ZOUYE_DATA_FILE=C:\...\job-analysis-system\data\other_jobs.csv
 py app.py
 ```
-
-macOS/Linux 可这样指定：
-
-```bash
-ZOUYE_DATA_FILE=/path/to/other_jobs.csv python3 app.py
-```
-
-> 环境若没装依赖，先建虚拟环境：
-> `py -m venv .venv` 然后 `.venv\Scripts\pip install -r requirements.txt`
 
 ## 二、抓取真实数据
 
@@ -247,6 +267,39 @@ set NO_PROXY=127.0.0.1,localhost
 **Excel 导出失败**
 需要 `openpyxl`，执行 `pip install -r requirements.txt` 即可。
 
+**`pip install` 卡在编译 / 报 `Failed building wheel for pandas`**
+最常见的原因是新版 Python 还没有对应的预编译 wheel，pip 转去源码编译；
+而编译需要 C 工具链和 `make`，多数机器上没有。三种解法，按推荐顺序：
+
+```bash
+# 1) 换用有 wheel 的 Python（最省事，推荐 3.11 / 3.12）
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+
+# 2) 让 pip 自查可选版本（不指定版本，装它认为合适的）
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install pandas
+
+# 3) 确实要用新版 Python：不走源码编译，改用 conda / 系统包管理器提供的 pandas
+```
+
+> 这个坑不是猜的：本项目的评审环境就是 Python 3.14，`pandas==2.2.3` 在
+> aarch64 上没有 wheel，报的正是 `Failed building wheel for pandas`
+> 与 `Could not find a make program`。所以 `requirements.txt` 才从钉死版本
+> 改成了范围 + `constraints.txt`。
+
+**看板上没有「采集趋势」图**
+趋势数据来自 SQLite，标准 CSV 里没有采集时间字段。执行一次即可：
+
+```bash
+python3 cli.py import --archive 抓取结果 --include-derived
+python3 cli.py verify          # 顺带核对数据质量
+```
+
+`data/jobs.db` 是生成物（约 5 MB，已被 `.gitignore` 忽略），删掉重跑不会丢数据。
+注意 `--include-derived` 在只有汇总文件 `抓取结果/boss_jobs_all.json` 时是必需的，
+否则会少掉那部分岗位。
+
 ## 七、说明
 
 抓取脚本 `scraper/scripts/boss_cdp_raw.py` 来自开源项目 [boss-zhipin-scraper](https://github.com/eatmoreduck/boss-zhipin-scraper)（MIT，见 `docs/THIRD_PARTY_LICENSE`）。本项目仅调用它获取本人有权查看的公开岗位信息，用于课程设计与学习研究，单次不超过 300 条，请求保持低频。
@@ -275,14 +328,14 @@ python -m pip install -r requirements.txt
 python3 -m unittest discover -s tests -v
 ```
 
-当前共 133 个用例。本机缺少 pandas 时，`test_app.py` 整个模块会以 SkipTest 明示
+当前共 135 个用例。本机缺少 pandas 时，`test_app.py` 整个模块会以 SkipTest 明示
 （其余 112 项照常运行）；装了依赖的环境会全部执行：
 
 | 测试文件 | 用例数 | 覆盖内容 |
 | --- | --- | --- |
 | `tests/test_parsing.py` | 39 | 薪资量纲、异常隔离、字段归一、公司名口径 |
 | `tests/test_smart_crawl.py` | 30 | 调度硬约束、切片累计上限、账本原子写、分类器 |
-| `tests/test_store.py` | 21 | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
+| `tests/test_store.py` | 22 | SQLite 落库幂等性、时间戳策略、趋势聚合、旧库迁移 |
 | `tests/test_app.py` | 21 | 看板接口、分页与排序、稳定标识详情、CSV 缓存（需 pandas） |
 | `tests/test_archive.py` | 16 | 归档单遍扫描、收益率、重复分布、字段差异 |
 | `tests/test_merge_jobs.py` | 6 | 归档合并与损坏文件的处理 |

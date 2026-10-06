@@ -224,6 +224,8 @@ def parse_batch(path: Path, *, include_derived: bool = False) -> tuple[list[dict
         jobs = []
     if not scraped_at:
         scraped_at = _timestamp_from_dir(path.parent.name)
+    if not scraped_at and include_derived and is_derived_archive(path):
+        scraped_at = _timestamp_from_derived(path)
     if scraped_at:
         scraped_at = scraped_at.replace(" ", "T", 1) if " " in scraped_at[:11] else scraped_at
     return jobs, scraped_at, path.name, keyword
@@ -238,6 +240,19 @@ def _timestamp_from_dir(name: str) -> str:
     if not match:
         return ""
     return f"{match.group(1)}-{match.group(2)}-{match.group(3)}T00:00:00"
+
+
+def _timestamp_from_derived(path: Path) -> str:
+    """派生汇总文件没有时间元数据时的兜底：用文件修改时间。
+
+    这条**只对派生汇总文件生效**（README 里也标注了这一点）。普通批次文件
+    绝不用 mtime —— 克隆仓库后 mtime 会变成克隆时间，趋势图最后一根柱子
+    会被顶到「今天」。派生文件用 mtime 合理：它就是某次整合运行的产物。
+    """
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        return ""
 
 
 def _row_from_job(job: dict, detail: dict | None = None) -> tuple[dict | None, str]:

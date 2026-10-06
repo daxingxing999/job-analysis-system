@@ -1,6 +1,14 @@
-Flask==3.0.3
-pandas==2.2.3
-jieba==0.42.1
-openpyxl==3.1.5
-requests==2.32.3
-websocket-client==1.8.0
+# 运行依赖（Web 应用 + 抓取链路）。
+#
+# 这里用「范围」而不是全量钉死版本：原先 Flask==3.0.3、pandas==2.2.3 这种
+# 写法在新版本 Python（实测 3.14）上会因为找不到对应 wheel 而直接装不上
+# （pandas 2.2.3 没有 3.14 的 aarch64 wheel，pip 会转去源码编译并失败）。
+# 需要完全复现的环境请用：pip install -r requirements.txt -c constraints.txt
+#
+# 推荐 Python 3.11 / 3.12 —— 这两个版本各平台都有现成 wheel。
+Flask>=3.0,<4
+pandas>=2.1,<3
+jieba>=0.42,<1
+openpyxl>=3.1,<4
+requests>=2.31,<3
+websocket-client>=1.7,<2

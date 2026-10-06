@@ -1,0 +1,10 @@
+# 开发/测试依赖。测试本身只用标准库 unittest，不需要 pytest；
+# 这里额外装的东西是为了让 tests/test_app.py（Flask + pandas 看板测试）
+# 以及覆盖率检查能跑起来。
+-r requirements.txt
+
+# 覆盖率（可选，但写论文时报告数字好看）
+coverage>=7.4,<8
+
+# 校验 GitHub Actions 工作流语法（可选）
+PyYAML>=6.0,<7

@@ -7,8 +7,10 @@
 """
 
 import json
+import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -226,6 +228,22 @@ class TimestampTests(StoreTestCase):
         stats = store.import_archive(self.db, self.archive, skip_undated=True)
         self.assertEqual(stats.batches, 0)
         self.assertEqual(stats.skipped_undated, ["boss_jobs_a.json"])
+
+    def test_derived_file_falls_back_to_mtime(self):
+        """派生汇总文件连 generated_at 都没有时，用 mtime 兜底。
+
+        这条**只对派生文件生效**：它的内容就是某次整合运行的产物，重跑就更新；
+        普通批次文件绝不用 mtime（见上一个用例），否则克隆仓库后趋势图会漂。
+        """
+        self.write_batch("boss_jobs_all.json", [job("id-1")])
+        path = self.archive / "boss_jobs_all.json"
+        os.utime(path, (time.mktime((2026, 9, 18, 17, 4, 13, 0, 0, 0)),) * 2)
+
+        _, with_derived, _, _ = store.parse_batch(path, include_derived=True)
+        _, plain, _, _ = store.parse_batch(path, include_derived=False)
+
+        self.assertTrue(with_derived.startswith("2026-09-18T17:04"))
+        self.assertEqual(plain, "", "非派生路径仍然绝不用 mtime")
 
 
 class TrendTests(StoreTestCase):
